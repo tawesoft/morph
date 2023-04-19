@@ -11,7 +11,7 @@
 //
 // Developed by [Tawesoft Ltd].
 //
-// [Tawesoft]: https://www.tawesoft.co.uk/
+// [Tawesoft Ltd]: https://www.tawesoft.co.uk/
 package morph
 
 import (
