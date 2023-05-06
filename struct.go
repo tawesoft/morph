@@ -285,7 +285,7 @@ func structValue(source Struct, signature string, morpher StructValueMorpher) (g
         Value string
     }
 
-    asgns := []assignment{}
+    var asgns []assignment
     for _, field := range source.Fields {
         emit := func(name, value string) {
             // TODO escape sequence for $
@@ -305,8 +305,15 @@ func structValue(source Struct, signature string, morpher StructValueMorpher) (g
     sb.WriteString(fn.Source)
     sb.WriteString(" {\n")
     sb.WriteString("\treturn ", )
-    // TODO convert pointer if needed
-    sb.WriteString(returns.Type)
+
+    // For type *Foo, return &Foo
+    if strings.HasPrefix(returns.Type, "*") {
+        sb.WriteRune('&')
+        sb.WriteString(returns.Type[1:])
+    } else {
+        sb.WriteString(returns.Type)
+    }
+
     sb.WriteString("{\n")
     for _, asgn := range asgns {
         sb.WriteString(fmt.Sprintf("\t\t%s: %s,\n", asgn.Name, asgn.Value))

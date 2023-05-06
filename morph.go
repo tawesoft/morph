@@ -23,20 +23,3 @@ func must[T any](result T, err error) T {
     if err == nil { return result }
     panic(err)
 }
-
-/*
-func generateFunc(signature Signature, returnType string, assignments []assignment) []byte {
-    var sb bytes.Buffer
-    fmt.Fprintf(&sb, "func %s {\n\treturn %s{\n",
-        signature.s.Source,
-        returnType,
-    )
-
-    for _, asgn := range assignments {
-        fmt.Fprintf(&sb, "\t\t%s: %s,\n", asgn.Name, asgn.Value)
-    }
-
-    sb.WriteString("\t}\n}\n")
-    return sb.Bytes()
-}
-*/

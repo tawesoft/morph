@@ -52,15 +52,30 @@ func Example() {
         }
     }
 
+    orangeToAppleMorpher := func(name, Type, tag string, emit func(name, value string)) {
+        switch name {
+            case "Picked": fallthrough
+            case "LastEaten":
+                emit(name, "time.Unix($, 0).UTC()")
+            default:
+                emit(name, "$")
+        }
+    }
+
     orange, err := morph.StructDefinition(apple, "Orange[X any]", definitionMorpher)
     if err != nil { panic(err) }
 
-    sig := "appleToOrange[I Insect](a Apple[I]) Orange[I]"
-    appleToOrange, err := morph.StructValue(apple, sig, appleToOrangeMorpher)
+    sigA2O := "appleToOrange[I Insect](a Apple[I]) Orange[I]"
+    appleToOrange, err := morph.StructValue(apple, sigA2O, appleToOrangeMorpher)
+    if err != nil { panic(err) }
+
+    sigO2A := "(o *Orange[X]) ToApple() *Apple[X]"
+    orangeToApple, err := morph.StructValue(orange, sigO2A, orangeToAppleMorpher)
     if err != nil { panic(err) }
 
     fmt.Println(orange.String())
     fmt.Println(appleToOrange)
+    fmt.Println(orangeToApple)
 
     // Output:
     // type Orange[X any] struct {
@@ -76,6 +91,15 @@ func Example() {
     //		Picked:    a.Picked.UTC().Unix(),
     //		LastEaten: a.LastEaten.UTC().Unix(),
     //		Contains:  a.Contains,
+    //	}
+    // }
+    //
+    // func (o *Orange[X]) ToApple() *Apple[X] {
+    //	return &Apple[X]{
+    //		Colour:    o.Colour,
+    //		Picked:    time.Unix(o.Picked, 0).UTC(),
+    //		LastEaten: time.Unix(o.LastEaten, 0).UTC(),
+    //		Contains:  o.Contains,
     //	}
     // }
 }
