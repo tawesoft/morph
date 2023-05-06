@@ -1,5 +1,7 @@
 ![Morph](morph.png)
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/tawesoft/morph#section-documentation.svg)](https://pkg.go.dev/github.com/tawesoft/morph#section-documentation)
+
 Morph
 =====
 
