@@ -1,7 +1,9 @@
+![Morph](morph.png)
+
 Morph
 =====
 
-Morph generates Go code to map values between related struct types
+Morph is a small library that generates Go code to map between structs...
 
 - without runtime reflection.
 
@@ -12,68 +14,110 @@ Morph generates Go code to map values between related struct types
 - where you can map to existing types, or use Morph to automatically generate 
   new types. 
 
-**Release status:** feature complete but needs tests, tidying. API subject 
-to change. (April 2023)
+Example
+-------
 
+Take an existing struct, `Apple`, that we want to automatically generate a new
+`Orange` struct from.
 
-Simple Example
---------------
-
-We want to map between values of these two struct types:
+The new `Orange` struct is automatically going to have the same fields as the
+`Apple` struct, except it will store time as integer epoch seconds instead.
 
 ```go
-MyStruct {
-    Foo, Bar time.Time
-    Fizz Maybe[string]
-}
-
-MyStructForSQL {
-    Foo, Bar int64 // epoch seconds
-    Fizz sql.NullString
+type Apple[X any] struct {
+    Colour    color.RGBA
+    Picked    time.Time
+    LastEaten time.Time
+    Contains  []X
 }
 ```
 
-We can create some morpher function that operates on the fields:
+First we parse it:
 
 ```go
-func MorphToSQL(name, Type string, emit func(name, Type, value string)) {
+apple, err := morph.ParseStruct("example.go", source, "Apple")
+```
+
+Then we describe how to create a new `Orange` struct definition from it by 
+defining a function that is called on every field in `Apple`:
+
+```go
+orange, err := apple.StructFunc("Orange[X any]",
+    func(name, Type, tag string, emit func(name, Type, tag string)) {
+        
     if Type == "time.Time" {
-        emit("$", "int64", "$.UTC().Unix()")
-    } else if Type == "Maybe[string]" {
-        emit("$", "sql.NullString", "MaybeToSqlNullString($)")
+        emit(name, "int64", tag) // epoch seconds
+    } else {
+        emit(name, Type, tag) // unchanged
     }
-}
+})
 ```
 
-And we use Morph to generate a Go function, which looks like:
+This generates the Go source code:
 
 ```go
-func MyStructToMyStructForSQL(from MyStruct) MyStructForSQL {
-    return MyStructForSQL{
-        Foo: from.Foo.UTC().Unix(),
-        Bar: from.Bar.UTC().Unix(),
-        Fizz: MaybeToSqlNullString(from.Fizz),
+type Orange[X any] struct {
+    Colour    color.RGBA
+    Picked    int64
+    LastEaten int64
+    Contains  []X
+}
+```
+
+We then describe how to generate a function that can map any `Apple` value 
+into an `Orange` value by defining a function that is again called on every
+field in `Apple`:
+
+```go
+signature := "appleToOrange[I Insect](a Apple[I]) Orange[I]"
+appleToOrange, err := apple.FunctionFunc(signature,
+    func(name, Type, tag string, emit func(name, value string)) {
+        
+    if Type == "time.Time" {
+        emit(name, "$.UTC().Unix()")
+    } else {
+        emit(name, "$")
+    }
+})
+```
+
+Here, `$` is used as a short-hand to refer to the matching input field.
+
+We could have instead written, with `a` corresponding to the input field
+defined in the signature:
+
+```go
+    if Type == "time.Time" {
+        emit(name, "a." + name + ".UTC().Unix()")
+    } ...
+```
+
+Note that we've assumed here that the slice field is read-only, so it 
+doesn't matter that we've copied a reference to it rather than cloning the
+slice. If that's not the case, then
+[clone](https://pkg.go.dev/golang.org/x/exp/slices#Clone) the slice e.g.:
+
+```go
+    ... } else if strings.HasPrefix(Type, "[]") {
+        emit(name, "slices.Clone($)")
+    } ...
+```
+
+Anyway, `appleToOrange` generates the Go source code:
+
+```go
+func appleToOrange[I Insect](a Apple[I]) Orange[I] {
+    return Orange[I]{
+        Colour:    a.Colour,
+        Picked:    a.Picked.UTC().Unix(),
+        LastEaten: a.LastEaten.UTC().Unix(),
+        Contains:  a.Contains,
     }
 }
 ```
 
-For the sake of the example, we defined `StructForSQL` ourselves, but Morph 
-can also be used to generate that type for us automatically.
+## Security Model
 
-
-Usage
------
-
-See the example in `morph_example_test.go`.
-
-FAQ
----
-
-### What about generics?
-
-Morph works with generic code, but with a few limitations that you're 
-unlikely to run into unless you do something weird.
-
-Morph currently doesn't know how to output generate a generic type when 
-automatically generating a struct definition, but could possibly do so in 
-future if there's any demand.
+WARNING: It is assumed that all inputs are trusted. DO NOT accept arbitrary
+input from untrusted sources under any circumstances, as this will parse
+and generate arbitrary code.
