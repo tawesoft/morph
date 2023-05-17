@@ -6,7 +6,7 @@ import (
     "github.com/tawesoft/morph"
 )
 
-func Example() {
+func Example_Struct() {
     // In this example, we have an "Apple" struct that we'd like to
     // automatically create an "Orange" struct from, with functions to
     // map between them.
@@ -142,5 +142,71 @@ func Example() {
     //		LastEaten: time.Unix(o.LastEaten, 0).UTC(),
     //		Contains:  o.Contains,
     //	}
+    // }
+}
+
+
+func Example_Function() {
+    // In this example, we take a function and use it to automatically
+    // construct new related functions of different forms.
+
+    // Here's a simple function to return a divide by b, returning an error
+    // it the caller attempts to divide by zero.
+    source := `
+    // Divide returns a divided by b. If b is zero, returns an error.
+    func Divide(a float64, b float64) (float64, error) {
+        if b == 0.0 {
+            return 0, fmt.Errorf("error: can't divide %f by zero", a)
+        } else {
+            return (a / b), nil
+        }
+    }
+    `
+
+    // First we take our existing source code, and parse it for the divide
+    // function:
+    divide := morph.ParseFunc("example.go", source, "Divide")
+
+    // For our first example, let's support partial application by generating
+    // the code for a function that returns a version of divide bound with a
+    // constant divisor.
+    dividePartial := divide.New("Divider").BindRight(1)
+    fmt.Println(dividePartial)
+
+    // This generates:
+    // func Divider(b float64) func(a float64) (float64, error) {
+    // 	return func(a float64) (float64, error) {
+    // 		return Divide(a, b)
+    // }
+    //
+    // This can be used like:
+    // half := Divider(2)
+    // fmt.Println(half(10)) // prints 5
+
+    // Similarly, we can take this further create a function that implements
+    // a "Promise" to perform a divide operation at a later date.
+    dividePromise := divide.New("DividePromise").BindAll()
+    fmt.Println(dividePromise)
+
+    // This generates:
+    // func DividePromise(a float64, b float64) func() (float64, error) {
+    // 	return func() (float64, error) {
+    // 		return Divide(a, b)
+    // }
+    //
+    // This can be used like:
+    // scorePromise := DividePromise(10, 2)
+    // // some time later...
+    // score := scorePromise()
+
+    // As another example, let's manipulate the return type of divide, for
+    // example to use a Result type that combines a (result, error) tuple into
+    // a single return value:
+    divideResult := divide.New("DivideResult").WrapResult("result.R[float64]", "result.New($)")
+    fmt.Println(divideResult)
+
+    // This generates:
+    // func DivideResult(a float64, b float64) result.R[float64] {
+    // 	return result.New(Divide(a, b))
     // }
 }
