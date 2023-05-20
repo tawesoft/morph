@@ -1,12 +1,13 @@
 package morph
 
 import (
-    "bytes"
     "fmt"
     "go/ast"
     "go/parser"
     "go/token"
     "go/types"
+    "strconv"
+    "strings"
 )
 
 // ParseStruct parses a given source file, looking for a struct with the given
@@ -16,8 +17,8 @@ import (
 //
 // If src != nil, ParseStruct parses the source from src and the filename is
 // only used when recording position information. The type of the argument for
-// the src parameter must be string, []byte, or io.Reader. If src == nil, Parse
-// parses the file specified by filename. This matches the behavior of
+// the src parameter must be string, []byte, or io.Reader. If src == nil,
+// instead parses the file specified by filename. This matches the behavior of
 // [go.Parser/ParseFile].
 //
 // Parsing is performed without full object resolution. This means parsing will
@@ -28,7 +29,7 @@ func ParseStruct(filename string, src any, name string) (result Struct, err erro
     }
 
     found := false
-    pflags := parser.DeclarationErrors | parser.SkipObjectResolution
+    pflags := parser.DeclarationErrors | parser.SkipObjectResolution | parser.ParseComments
     fset := token.NewFileSet()
     astf, err := parser.ParseFile(fset, filename, src, pflags)
     if err != nil {
@@ -50,13 +51,14 @@ func ParseStruct(filename string, src any, name string) (result Struct, err erro
                 return false
             }
 
-            structName := typeSpec.Name.String()
-            if (name != "") && (name != structName) {
+            var structName string
+            if structName = typeSpec.Name.String(); (name != "") && (name != structName) {
                 return false
             }
 
             result = Struct{
                 Name:       structName,
+                Comment:    astText(x.Doc),
                 TypeParams: fields(typeSpec.TypeParams),
                 Fields:     fields(structType.Fields),
             }
@@ -64,10 +66,103 @@ func ParseStruct(filename string, src any, name string) (result Struct, err erro
 
             return false
         case *ast.FuncDecl:
-            // globally-scoped structs only
+            // we want globally-scoped structs only
             return false
         }
         return true
+    })
+
+    if !found {
+        return esc(fmt.Errorf("not found"))
+    }
+    return result, nil
+}
+
+// ParseFunctionSignature parses a given source file, looking for a function
+// with the given name, and recording its signature.
+//
+// ParseFunctionSignature does not look for any methods on a type. For this,
+// use [ParseMethodSignature] instead.
+//
+// If src != nil, ParseFunction parses the source from src and the filename is
+// only used when recording position information. The type of the argument for
+// the src parameter must be string, []byte, or io.Reader. If src == nil,
+// instead parses the file specified by filename. This matches the behavior of
+// [go.Parser/ParseFile].
+//
+// Parsing is performed without full object resolution. This means parsing will
+// still succeed even on some files that may not actually compile.
+func ParseFunctionSignature(filename string, src any, name string) (result FunctionSignature, err error) {
+    return parseFunctionSignature(filename, src, func(sig FunctionSignature) bool {
+        return (name == sig.Name) && (sig.Receiver.Name == "")
+    })
+}
+
+// ParseFirstFunctionSignature is like [ParseFunctionSignature], except it will
+// return the first function found (including methods).
+func ParseFirstFunctionSignature(filename string, src any) (result FunctionSignature, err error) {
+    return parseFunctionSignature(filename, src, func(sig FunctionSignature) bool {
+        return true
+    })
+}
+
+// ParseMethodSignature is like [ParseFunctionSignature], except it will match
+// functions that are methods on the given type. Unlike ParseFunctionSignature,
+// it does not have any special behaviour
+//
+// For example, to look for a method signature such as `func (foo *Bar) Baz()`,
+// i.e. method Baz on type Bar with a pointer receiver, then set the name
+// argument to "Baz" and the type argument to either "Bar" or "*Bar" (it
+// doesn't matter which). Generic type constraints are ignored.
+func ParseMethodSignature(filename string, src any, Type string, name string) (result FunctionSignature, err error) {
+    return parseFunctionSignature(filename, src, func(sig FunctionSignature) bool {
+        return (name == sig.Name) && (sig.Receiver.Type == Type)
+        // TODO pointer check and ignore type constraints
+    })
+}
+
+func parseFunctionSignature(
+    filename string,
+    src any,
+    filter func(sig FunctionSignature) bool,
+) (result FunctionSignature, err error) {
+    esc := func(err error) (FunctionSignature, error) {
+        return FunctionSignature{}, fmt.Errorf(
+            "error parsing %q for function: %w", filename, err,
+        )
+    }
+
+    pflags := parser.DeclarationErrors | parser.SkipObjectResolution | parser.ParseComments
+    fset := token.NewFileSet()
+    astf, err := parser.ParseFile(fset, "temp.go", src, pflags)
+    if err != nil {
+        return esc(err)
+    }
+
+    found := false
+    ast.Inspect(astf, func(n ast.Node) bool {
+        if found || (n == nil) {
+            return false
+        }
+
+        funcDecl, ok := n.(*ast.FuncDecl)
+        if !ok {
+            return true
+        }
+
+        sig := FunctionSignature{
+            Name:      funcDecl.Name.String(),
+            Comment:   astText(funcDecl.Doc),
+            Type:      fields(funcDecl.Type.TypeParams),
+            Arguments: funcfields(funcDecl.Type.Params),
+            Returns:   funcfields(funcDecl.Type.Results),
+            Receiver:  fieldsOne(funcDecl.Recv),
+        }
+        if filter(sig) {
+            found = true
+            result = sig
+        }
+        return false
     })
 
     if !found {
@@ -85,161 +180,85 @@ func (f FunctionSignature) singleReturn() (Field, bool) {
     return f.Returns[0], true
 }
 
-// parseFunctionSignature parses the source code of a single FunctionSignature
+// parseFunctionSignatureFromString parses the source code of a single function
 // signature, such as `Foo(a A) B`.
 //
 // Parsing is performed without full object resolution.
-func parseFunctionSignature(signature string) (result FunctionSignature, err error) {
-
-    esc := func(err error) (FunctionSignature, error) {
-        return FunctionSignature{}, fmt.Errorf("error parsing FunctionSignature signature %q: %w", signature, err)
-    }
-
-    // ParseExpr doesn't work because we can't make a named FunctionSignature an
-    // expression, so we have to create a whole dummy AST for a file.
+func parseFunctionSignatureFromString(signature string) (result FunctionSignature, err error) {
+    // ParseExpr doesn't work because we can't make a named function an expression,
+    // so we create a whole dummy AST for a file.
     src := `package temp; func ` + signature + ` {}`
-
-    pflags := parser.DeclarationErrors | parser.SkipObjectResolution
-    fset := token.NewFileSet()
-    astf, err := parser.ParseFile(fset, "temp.go", src, pflags)
-    if err != nil {
-        return esc(err)
-    }
-
-    found := false
-    ast.Inspect(astf, func(n ast.Node) bool {
-        if found {
-            return false
-        }
-        if n == nil {
-            return false
-        }
-
-        funcDecl, ok := n.(*ast.FuncDecl)
-        if !ok {
-            return true
-        }
-
-        result = FunctionSignature{
-            Raw:       signature,
-            Name:      funcDecl.Name.String(),
-            Type:      fields(funcDecl.Type.TypeParams),
-            Arguments: fields(funcDecl.Type.Params),
-            Returns:   fields(funcDecl.Type.Results),
-        }
-        if funcDecl.Recv != nil {
-            result.Receiver = fields(funcDecl.Recv)[0]
-        }
-        found = true
-        return false
-    })
-
-    if !found {
-        return esc(fmt.Errorf("not found"))
-    }
-    return result, nil
+    return ParseFirstFunctionSignature("", src)
 }
 
-// simpleTypeExpr returns a type formatted as a string if the type is simple
-// (i.e. not a map, slice, channel etc.). Otherwise, returns (_, false).
+// astText returns the result of calling the Text() method on anything with
+// that interface, or the empty string if the input is nil. Also trims spaces.
+func astText(x interface{ Text() string }) string {
+    if x == nil { return "" } else { return strings.TrimSpace(x.Text()) }
+}
+
+// fieldsOne returns the first field, if it exists.
+func fieldsOne(fs *ast.FieldList) Field {
+    if fs == nil { return Field{} }
+    return fields(fs)[0]
+}
+
+// fields converts an ast.FieldList into []Field. Returns nil for a nil input.
 //
-// This is used to find the first FunctionSignature argument (or receiver) that
-// matches a given type.
-func simpleTypeExpr(x ast.Expr) (string, bool) {
-    var buf bytes.Buffer
-    ok := writeSimpleTypeExpr(&buf, x)
-    return buf.String(), ok
-}
-
-// writeSimpleTypeExpr is a shortened version of [types.ExprString] used by
-// [simpleTypeExpr] to format a type as a string, excluding several features
-// not needed for our purposes such as map types.
-func writeSimpleTypeExpr(buf *bytes.Buffer, x ast.Expr) bool {
-    unpackIndexExpr := func(n ast.Node) (x ast.Expr, lbrack token.Pos, indices []ast.Expr, rbrack token.Pos) {
-        switch e := n.(type) {
-        case *ast.IndexExpr:
-            return e.X, e.Lbrack, []ast.Expr{e.Index}, e.Rbrack
-        case *ast.IndexListExpr:
-            return e.X, e.Lbrack, e.Indices, e.Rbrack
-        }
-        return nil, token.NoPos, nil, token.NoPos
-    }
-
-    switch x := x.(type) {
-    default:
-        return false
-
-    case *ast.Ident:
-        buf.WriteString(x.Name)
-
-    case *ast.BasicLit:
-        buf.WriteString(x.Value)
-
-    case *ast.SelectorExpr:
-        ok := writeSimpleTypeExpr(buf, x.X)
-        if !ok {
-            return false
-        }
-        buf.WriteByte('.')
-        buf.WriteString(x.Sel.Name)
-
-    case *ast.IndexExpr, *ast.IndexListExpr:
-        ixX, _, ixIndices, _ := unpackIndexExpr(x)
-        ok := writeSimpleTypeExpr(buf, ixX)
-        if !ok {
-            return false
-        }
-        buf.WriteByte('[')
-        ok = writeSimpleTypeExprList(buf, ixIndices)
-        if !ok {
-            return false
-        }
-        buf.WriteByte(']')
-
-    case *ast.StarExpr:
-        buf.WriteByte('*')
-        return writeSimpleTypeExpr(buf, x.X)
-    }
-    return true
-}
-
-func writeSimpleTypeExprList(buf *bytes.Buffer, list []ast.Expr) bool {
-    for i, x := range list {
-        if i > 0 {
-            buf.WriteString(", ")
-        }
-        ok := writeSimpleTypeExpr(buf, x)
-        if !ok {
-            return false
-        }
-    }
-    return true
-}
-
-// fields converts an ast.FieldList into []Field
+// A field with a type but no name is treated as a struct's embedded type with
+// its name inherited from the type name.
 func fields(fieldList *ast.FieldList) []Field {
+    return _fields(fieldList, true)
+}
+
+// funcfields converts an ast.FieldList into []Field. Returns nil for a nil
+// input.
+//
+// Unlike the fields function, a field with a type but no name is permitted.
+func funcfields(fieldList *ast.FieldList) []Field {
+    return _fields(fieldList, false)
+}
+
+func _fields(fieldList *ast.FieldList, allowEmbedded bool) []Field {
     if fieldList == nil {
         return nil
     }
     result := []Field{}
     for _, field := range fieldList.List {
         fieldType := types.ExprString(field.Type)
+        var tag string
+        if field.Tag != nil {
+            tag = must(strconv.Unquote(field.Tag.Value))
+        }
+        comment := astText(field.Doc)
+        if comment == "" { comment = astText(field.Comment) }
 
         for _, fieldName := range field.Names {
-            var tag string
-            if field.Tag != nil {
-                tag = field.Tag.Value
-            }
-            result = append(result, Field{fieldName.String(), fieldType, tag})
+            result = append(result, Field{
+                Name: fieldName.String(),
+                Type: fieldType,
+                Tag: tag,
+                Comment: comment,
+            })
         }
         if len(field.Names) == 0 {
+            var name = ""
             // e.g. embedded field Foo in struct Bar:
             //     type Foo struct { ... }
             //     type Bar struct { Foo }
             // This is treated as a field with name Foo.
-            result = append(result, Field{fieldType, fieldType, ""})
+            if allowEmbedded {
+                name = fieldType
+            }
+            result = append(result, Field{
+                Name: name,
+                Type: fieldType,
+                Tag: tag,
+                Comment: comment,
+            })
         }
     }
+    if len(result) == 0 { return nil }
     return result
 }
 
@@ -250,5 +269,6 @@ func filterFields(fields []Field, filter func(f Field) bool) []Field {
             result = append(result, f)
         }
     }
+    if len(result) == 0 { return nil }
     return result
 }

@@ -5,7 +5,7 @@ import (
     "testing"
 )
 
-func Test_simpleType(t *testing.T) {
+func Test_simpleTypeExpr(t *testing.T) {
     type row struct {
         input string
         cmp string

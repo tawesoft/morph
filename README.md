@@ -5,137 +5,109 @@
 Morph
 =====
 
-Morph is a small Go code generator that generates code to map between
-structs and call functions in different ways.
+Morph is a small Go code generator that makes it easy to map between
+Go structs, automatically derive new Go structs, and wrap functions in 
+different ways.
 
- - without runtime reflection.
+Features:
 
- - without stuffing a new domain-specific language into struct field tags.
+ - fully programmable (in native Go).
 
- - with a simple, fully programmable mapping described in native Go code.
+ - full support for generics.
 
- - where you can map to existing struct types, or use Morph to automatically
-   generate new struct types.
+ - no runtime reflection.
 
- - with full support for generics.
+ - no ugly new struct field tags to learn.
 
-Example: Mapping between struct types
--------------------------------------
+ - elegant and extremely composable code.
+
+ - big library of done-for-you mappings and helpers:
+   * [fields] for morphing structs
+   * ***TODO*** funcs for wrapping functions
+
+
+Examples
+--------
+
+### Mapping between structs
 
 Take the source code for an example struct, `Apple`:
 
 ```go
 type Apple struct {
-    Colour    color.RGBA
     Picked    time.Time
     LastEaten time.Time
+    Weight    custom.Grams
+    Price     custom.Price
 }
 ```
 
-In this example, we are going to create a new `Orange` struct. It is going 
-to have the same fields as the `Apple` struct, except it will store time as 
-integer epoch seconds instead.
+Let's say we want a version where every field is an integer, for example to 
+serialise it to a binary format on disk, or to store it in a database.
 
-We define two functions. The first derives the `Orange` struct from an `Apple`
-struct. The second describes how to turn an `Apple` value into an `Orange`
-value.
-
-```go
-func(name, Type, tag string, emit func(name, Type, tag string)) {
-    if Type == "time.Time" {
-        emit(name, "int64", tag) // epoch seconds
-    } else {
-        emit(name, Type, tag) // unchanged
-    }
-}
-
-func(name, Type, tag string, emit func(name, value string))
-    if Type == "time.Time" {
-        emit(name, "$.UTC().Unix()")
-    } else {
-        emit(name, "$")
-    }
-}
-```
-
-These happen to be general purpose enough that we could use them on other
-types, too. Regardless, these functions can be used to generate 
-the following Go source code from our `Apple`:
+Morph can quickly let us generate:
 
 ```go
 type Orange struct {
-    Colour    color.RGBA
-    Picked    int64
-    LastEaten int64
+    Picked    int64 // time in seconds since Unix epoch
+    LastEaten int64 // time in seconds since Unix epoch
+    Weight    int32 // weight in grams
+    Price     int32 // price in pence
 }
 
 func appleToOrange(a Apple) Orange {
     return Orange{
-        Colour:    a.Colour,
         Picked:    a.Picked.UTC().Unix(),
         LastEaten: a.LastEaten.UTC().Unix(),
-        Contains:  a.Contains,
+        Weight:    int32(a.Weight),
+        Price:     int32(a.Price),
     }
 }
 ```
 
-The [examples](https://pkg.go.dev/github.com/tawesoft/morph#pkg-examples)
-demonstrate how to achieve this in more detail.
+### Wrapping a function in different ways
 
+***TODO*** *This bit isn't fully implemented yet, but it will be soon!*
 
-Example: Manipulating a function's form
----------------------------------------
-
-Take the source code for an example function, `Divide`:
+Let's take the source code for an example function, Divide:
 
 ```go
 // Divide returns a divided by b. If b is zero, returns an error.
-func Divide(a, b float64) (float64, error) {
-    if b == 0.0 {
-        return 0, fmt.Errorf("error: can't divide %f by zero", a)
-    } else {
-        return (a / b), nil
-    }
-}
+func Divide(a, b float64) (float64, error) { /* ... */ }
 ```
 
-Morph can parse this and derive other forms of this function that partially
-apply arguments, wrap inputs or results, or operate as a method, by wrapping
-the original `Divide` function. It can generate Go source code like so:
+Morph can quickly let us generate functions that wrap Divide but take a 
+bunch of different forms (implementations elided for the sake of readability).
 
 ```go
-// Divider partially applies [Divide] with a constant divisor.
-func Divider(b float64) func (a float64) (float64, error) { ... }
+// Halver divides x by two.
+func Halver(x float64) float64 { /* ... */ }
 
-// DividePromise returns a promise to call [Divide] on the provided arguments. 
-func DividePromise(a, b float64) func () (float64, error) { ... }
+// Divider constructs a function that partially applies [Divide] with a
+// constant divisor, returning a new function that divides by the given
+// divisor. It panics if the divisor is zero.
+func Divider(divisor float64) func (a float64) float64 { /* ... */ }
 
-// DivideResult returns the result of [Divide] on the provided arguments,
-// collected into a Result type.
-func DivideResult(a, b float64) Result.R[float64] { ... }
+// DividePromise returns a callback function (a promise) to call Divide(a, b) 
+// when called.
+func DividePromise(x, b float64) func () (float64, error) { /* ... */ }
 
-// Decimal converts a fraction such as
-// Fraction{Numerator: 1, Denominator: 3}` into a result such as 2.3333.
-func (f Fraction) Decimal() (float64, error) { ... }
+// DivideResult returns the result of Divide(a,b) collected into a Result 
+// sum type.
+func DivideResult(a, b float64) Result.R[float64] { /* ... */ }
+
+// Decimal is a method on a Fraction that converts a value such as
+// Fraction{Numerator: 1, Denominator: 3}` into a result such as 0.3333.
+func (f Fraction) Decimal() (float64, error) { /* ... */ }
 ```
 
-The function internals are elided for the sake of demonstration, but are
-generally thin wrappers around a call to the original function.
+Tutorials
+---------
 
-The [examples](https://pkg.go.dev/github.com/tawesoft/morph#pkg-examples)
-demonstrate how to achieve this in more detail.
-
-
-Usage
---------------
-
-You use morph as a library:
-
-```go
-import "github.com/tawesoft/morph"
-```
-
-Then simply `go run` something that uses morph to write to a file.
+* [Mapping between Go structs.]
+* [Wrapping Go functions in different ways.]
+* [Using morph with `go generate`.]
+* [Morph recipes for any occasion.]
 
 
 Security Model
@@ -144,3 +116,10 @@ Security Model
 WARNING: It is assumed that all inputs are trusted. DO NOT accept arbitrary
 input from untrusted sources under any circumstances, as this will parse
 and generate arbitrary code.
+
+
+[fields]: https://pkg.go.dev/github.com/tawesoft/morph/fields
+[Mapping between Go structs.]: doc/mapping-between-go-structs.md
+[Wrapping Go functions in different ways.]: doc/wrapping-go-functions.md
+[Using morph with `go generate`.]: doc/morph-go-generate.md
+[Morph recipes for any occasion.]: doc/morph-recipies.md

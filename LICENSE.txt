@@ -2,6 +2,7 @@ github.com/tawesoft/morph
 
 Copyright © 2023 Ben Golightly <ben@tawesoft.co.uk>
 Copyright © 2023 Tawesoft Ltd <opensource@tawesoft.co.uk>
+Copyright 2009 The Go Authors (the file tag.go).
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
