@@ -7,42 +7,6 @@ import (
     "github.com/tawesoft/morph"
 )
 
-func TestNextTagPair(t *testing.T) {
-    type result struct {
-        key, value, rest string
-        ok bool
-    }
-    tests := []struct {
-        input string
-        outputs []result
-    }{
-        {
-            input: `tag1:"foo" tag2:"bar" tag3:"foo bar baz"`,
-            outputs: []result{
-                {"tag1", "foo", `tag2:"bar" tag3:"foo bar baz"`, true},
-                {"tag2", "bar", `tag3:"foo bar baz"`, true},
-                {"tag3", "foo bar baz", ``, true},
-                {"", "", ``, false},
-            },
-        },
-    }
-
-    for i, test := range tests {
-        var key, value, rest string
-        var ok bool
-        rest = test.input
-        for j, output := range test.outputs {
-            key, value, rest, ok = morph.NextTagPair(rest)
-            got := result{key, value, rest, ok}
-            if got != output {
-                t.Logf("got: %+v", got)
-                t.Logf("expected: %+v", output)
-                t.Errorf("test %d output %d: unexpected result", i, j)
-            }
-        }
-    }
-}
-
 func TestParseStruct(t *testing.T) {
     type Test struct {
         Desc string

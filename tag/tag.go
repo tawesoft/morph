@@ -1,4 +1,4 @@
-package morph
+package tag
 
 // This file contains code Copyright 2009 The Go Authors. All rights reserved.
 //
@@ -9,13 +9,14 @@ package morph
 // some string processing.
 
 import (
-	"strconv"
+    "fmt"
+    "strconv"
 	"unicode/utf8"
 )
 
-// QuoteTag is like [strconv.Quote], but uses backticks instead of double
+// Quote is like [strconv.Quote], but uses backticks instead of double
 // quotes.
-func QuoteTag(s string) string {
+func Quote(s string) string {
 	return quoteWith(s, '`', false, false)
 }
 
@@ -160,27 +161,27 @@ func bsearch16(a []uint16, x uint16) int {
 	return i
 }
 
-// LookupTag looks up values in a struct tag, which by convention is
+// Lookup looks up values in a struct tag, which by convention is
 // a sequence of key:"value" pairs, optionally separated by whitespace.
 // See [reflect.StructTag].
 //
 // Note that, unlike the Go parser and reflect package, struct tag strings in
 // morph are not enclosed with a quote pair like a Go string literal. The
-// input to this function, unlike [reflect.StructTag], is unquoted.
+// input to this function is unquoted.
 //
 // It returns the value associated with key in the tag string. If the key
 // is present in the tag the value (which may be empty) is returned. Otherwise,
 // the returned value will be the empty string. The ok return value reports
 // whether the value was explicitly set in the tag string. If the tag does not
 // have the conventional format, the value returned by Lookup is unspecified.
-func LookupTag(tag, key string) (value string, ok bool) {
+func Lookup(tag, key string) (value string, ok bool) {
 	// This function is mostly a copy of the [reflect.StructTag.Lookup] method in
 	// [reflect/type.go]
 
 	if len(tag) == 0 {
 		return "", false
 	}
-	tag = strconv.Quote(tag)
+	// tag = strconv.Quote(tag)
 
 	for tag != "" {
 		// Skip leading space.
@@ -221,6 +222,7 @@ func LookupTag(tag, key string) (value string, ok bool) {
 		qvalue := string(tag[:i+1])
 		tag = tag[i+1:]
 
+        fmt.Printf("compare key %q and name %q\n", key, name)
 		if key == name {
 			value, err := strconv.Unquote(qvalue)
 			if err != nil {
@@ -232,30 +234,25 @@ func LookupTag(tag, key string) (value string, ok bool) {
 	return "", false
 }
 
-// NextTagPair returns the next key, value, and remaining tag in a struct tag
+// NextPair returns the next key, value, and remaining tag in a struct tag
 // string.
 //
 // Note that, unlike the Go parser and reflect package, struct tag strings in
 // morph are not enclosed with a quote pair like a Go string literal. The
-// input to this function, unlike [reflect.StructTag], is unquoted.
+// input to this function is unquoted.
 //
 // The ok return value reports whether the value was explicitly set in the tag
 // string. If the tag does not have the conventional format, the value returned
 // by is unspecified.
-func NextTagPair(tag string) (key, value, rest string, ok bool) {
+func NextPair(tag string) (key, value, rest string, ok bool) {
 	// This function is based on the [reflect.StructTag.Lookup] method in
 	// [reflect/type.go](https://cs.opensource.google/go/go/+/refs/tags/go1.20.4:src/reflect/type.go;l=1201).
 
 	if len(tag) == 0 {
 		return "", "", "", false
 	}
-	tag = QuoteTag(tag)
 
 	for tag != "" {
-		// Skip leading quote
-		if len(tag) > 0 && tag[0] == '`' {
-			tag = tag[1:]
-		}
 		// Skip leading space.
 		i := 0
 		for i < len(tag) && tag[i] == ' ' {
@@ -294,10 +291,6 @@ func NextTagPair(tag string) (key, value, rest string, ok bool) {
 		qvalue := string(tag[:i+1])
 		tag = tag[i+1:]
 
-		// Skip trailing quote
-		if len(tag) > 0 && tag[len(tag)-1] == '`' {
-			tag = tag[0 : len(tag)-1]
-		}
 		// Skip leading space
 		i = 0
 		for i < len(tag) && tag[i] == ' ' {

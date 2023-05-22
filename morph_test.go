@@ -5,7 +5,6 @@ import (
     "testing"
 
     "github.com/tawesoft/morph"
-    "github.com/tawesoft/morph/fields"
 )
 
 const testSource = `
@@ -33,23 +32,17 @@ func must[X any](x X, err error) X {
     return x
 }
 
-func morphAllFields(source morph.Struct, input morph.Field, emit func(output morph.Field)) {
-    comment := input.Comment
-    if len(comment) > 0 {
-        comment = fields.AppendComments(comment, "comment added by morph")
-    } else {
-        comment = "comment added by morph"
-    }
-    tag := input.Tag
+func morphAllFields(input morph.Field, emit func(output morph.Field)) {
+    input = input.AppendComments("comment added by morph")
     if len(input.Tag) > 0 {
-        tag = fields.AppendTags(input.Tag, `test:"morph"`)
+        input = input.AppendTags(`test:"morph"`)
     }
     emit(morph.Field{
         Name:    "$2",
         Type:    "maybe.M[$]",
-        Value:   "maybe.Some($)",
-        Tag:     tag,
-        Comment: comment,
+        Value:   "maybe.Some($.$)",
+        Tag:     input.Tag,
+        Comment: input.Comment,
     })
 }
 
@@ -58,15 +51,15 @@ func TestStruct_Struct(t *testing.T) {
     tests := []struct{
         input morph.Struct
         signature string
-        mapper morph.Mapper
+        mapper morph.StructMapper
         expected string
     }{
         { // test 0
             input:     must(morph.ParseStruct("test.go", testSource, "Apple")),
-            signature: "Orange",
+            signature: "OrangeFrom$",
             mapper:    morphAllFields,
             expected:  formatSource(`
-type Orange struct {
+type OrangeFromApple struct {
     Picked2    maybe.M[time.Time] // comment added by morph
     LastEaten2 maybe.M[time.Time] // comment added by morph
     Weight2    maybe.M[custom.Grams] // comment added by morph
@@ -77,10 +70,10 @@ type Orange struct {
         },
         { // test 1
             input:     must(morph.ParseStruct("test.go", testSource, "GenericApple")),
-            signature: "Orange[T any, W any, P any]",
+            signature: "OrangeFrom$[T any, W any, P any]",
             mapper:    morphAllFields,
             expected:  formatSource(`
-type Orange[T any, W any, P any] struct {
+type OrangeFromGenericApple[T any, W any, P any] struct {
     Picked2    maybe.M[T] // comment added by morph
     LastEaten2 maybe.M[T] // comment added by morph
     Weight2    maybe.M[W] // comment added by morph
@@ -99,8 +92,8 @@ type Orange[T any, W any, P any] struct {
         }
         result := strings.TrimSpace(s.String())
         if result != test.expected {
-            t.Logf("got:\n%q", result)
-            t.Logf("expected:\n%q", test.expected)
+            t.Logf("got:\n%s", result)
+            t.Logf("expected:\n%s", test.expected)
             t.Errorf("test %d failed: unexpected output", i)
         }
     }
@@ -111,7 +104,7 @@ func TestStruct_Function(t *testing.T) {
     tests := []struct{
         input morph.Struct
         signature string
-        mapper morph.Mapper
+        mapper morph.StructMapper
         expected string
     }{
         { // test 0

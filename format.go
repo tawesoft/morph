@@ -7,6 +7,8 @@ import (
     "go/format"
     "go/token"
     "strings"
+
+    "github.com/tawesoft/morph/tag"
 )
 
 func formatSource(source string) (string, error) {
@@ -159,15 +161,9 @@ func _functionSignature_string(fn FunctionSignature) string {
     return sb.String()
 }
 
-// _struct_string implements the Struct.String method.
-func _struct_string(s Struct) string {
-    var sb bytes.Buffer
-    if len(s.Comment) > 0 {
-        for _, line := range strings.Split(s.Comment, "\n") {
-            sb.WriteString(fmt.Sprintf("// %s\n", line))
-        }
-    }
-    sb.WriteString("type ")
+// _struct_signature implements the Struct.Signature method.
+func _struct_signature(s Struct) string {
+    var sb strings.Builder
     sb.WriteString(s.Name)
     if len(s.TypeParams) > 0 {
         sb.WriteRune('[')
@@ -181,6 +177,19 @@ func _struct_string(s Struct) string {
         }
         sb.WriteRune(']')
     }
+    return sb.String()
+}
+
+// _struct_string implements the Struct.String method.
+func _struct_string(s Struct) string {
+    var sb bytes.Buffer
+    if len(s.Comment) > 0 {
+        for _, line := range strings.Split(s.Comment, "\n") {
+            sb.WriteString(fmt.Sprintf("// %s\n", line))
+        }
+    }
+    sb.WriteString("type ")
+    sb.WriteString(s.Signature())
     sb.WriteString(" struct {\n")
 
     for _, field := range s.Fields {
@@ -199,7 +208,7 @@ func _struct_string(s Struct) string {
         sb.WriteString(field.Type)
         if len(field.Tag) > 0 {
             sb.WriteRune(' ')
-            sb.WriteString(QuoteTag(field.Tag))
+            sb.WriteString(tag.Quote(field.Tag))
         }
         if (!multilineComment) && (len(field.Comment) > 0) {
             sb.WriteString(" // ")
@@ -237,7 +246,11 @@ func _struct_function_Body(returnType string, assignments []Field) string {
 
     sb.WriteString("{\n")
     for _, asgn := range assignments {
-        sb.WriteString(fmt.Sprintf("\t\t%s: %s,\n", asgn.Name, asgn.Value))
+        if asgn.Value == "" {
+            sb.WriteString(fmt.Sprintf("\t\t// %s is the zero value.\n", asgn.Name))
+        } else {
+            sb.WriteString(fmt.Sprintf("\t\t%s: %s,\n", asgn.Name, asgn.Value))
+        }
     }
     sb.WriteString("\t}")
     return sb.String()

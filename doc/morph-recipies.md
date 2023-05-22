@@ -71,7 +71,11 @@ Between Go Structs with Morph], for help with this.
 ***TODO*** *What if morph could automatically generate code for reflection-free 
 XML and JSON parsers?*
 
-## Automatically generate Go SQL struct types
+## Automatically generate SQL field types for Go structs
+
+***TODO***
+
+## Automatically initialise a Go struct with default values
 
 ***TODO***
 

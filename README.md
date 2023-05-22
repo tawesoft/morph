@@ -19,15 +19,15 @@ Features:
 
  - no ugly new struct field tags to learn.
 
- - elegant and extremely composable code.
+ - elegant and extremely composable mappings.
 
  - big library of done-for-you mappings and helpers:
    * [fields] for morphing structs
    * ***TODO*** funcs for wrapping functions
 
 
-Examples
---------
+Quick Examples
+--------------
 
 ### Mapping between structs
 
