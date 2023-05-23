@@ -5,6 +5,7 @@ import (
 
     "github.com/tawesoft/morph"
     "github.com/tawesoft/morph/fields"
+    "github.com/tawesoft/morph/structs"
 )
 
 func must[X any](x X, err error) X {
@@ -26,7 +27,7 @@ func Test(t *testing.T) {
     tests := []struct {
         desc string
         input morph.Struct
-        mapper morph.StructMapper
+        mapper morph.FieldMapper
         expectedStruct morph.Struct
         expectedFunc morph.Function
         expectedReverseStruct morph.Struct
@@ -67,7 +68,6 @@ func Test(t *testing.T) {
     }`,
             },
         },
-
         {
             desc: "fields.TimeToInt64",
             input: morph.Struct{
@@ -87,7 +87,6 @@ func Test(t *testing.T) {
                         Name:    "B",
                         Type:    "int64",
                         Comment: "time in seconds since Unix epoch",
-                        Tag:     `morph-reverse-type:"time.Time" morph-reverse-value:"time.Unix($.B, 0).UTC()"`,
                     },
                     {Name: "C",  Type: "int"},
                 },
@@ -121,18 +120,17 @@ func Test(t *testing.T) {
 
     for _, test := range tests {
         t.Run(test.desc, func(t *testing.T) {
-            resultStruct, err := test.input.Struct("Output", test.mapper)
-            if err != nil {
-                t.Errorf("error: %s", err)
-            } else {
-                if resultStruct.String() != test.expectedStruct.String() {
-                    t.Logf("got struct:\n%s", resultStruct)
-                    t.Logf("expected struct:\n%s", test.expectedStruct)
-                    t.Errorf("structs did not compare equal")
-                }
+            resultStruct := test.input.
+                MapFields(test.mapper).
+                Map(structs.Rename(test.expectedStruct.Name))
+
+            if resultStruct.String() != test.expectedStruct.String() {
+                t.Logf("got struct:\n%s", resultStruct)
+                t.Logf("expected struct:\n%s", test.expectedStruct)
+                t.Errorf("structs did not compare equal")
             }
 
-            resultFunc, err := test.input.Function(fsig.String(), test.mapper)
+            resultFunc, err := resultStruct.Converter(fsig.String())
             if err != nil {
                 t.Errorf("error: %s", err)
             } else {
@@ -144,20 +142,16 @@ func Test(t *testing.T) {
             }
 
             if test.expectedReverseStruct.Name != "" {
-                resultReverseStruct, err := resultStruct.Struct("Input", fields.Reverse)
-                if err != nil {
-                    t.Errorf("error: %s", err)
-                } else {
-                    if resultReverseStruct.String() != test.expectedReverseStruct.String() {
-                        t.Logf("got reverse struct:\n%s", resultReverseStruct)
-                        t.Logf("expected reverse struct:\n%s", test.expectedReverseStruct)
-                        t.Errorf("reverse structs did not compare equal")
-                    }
+                resultReverseStruct := resultStruct.
+                    MapFields(fields.Reverse).
+                    Map(structs.Rename(test.expectedReverseStruct.Name))
+                if resultReverseStruct.String() != test.expectedReverseStruct.String() {
+                    t.Logf("got reverse struct:\n%s", resultReverseStruct)
+                    t.Logf("expected reverse struct:\n%s", test.expectedReverseStruct)
+                    t.Errorf("reverse structs did not compare equal")
                 }
-            }
 
-            if test.expectedReverseFunc.Signature.Name != "" {
-                resultReverseFunc, err := resultStruct.Function(fsigReverse.String(), fields.Reverse)
+                resultReverseFunc, err := resultReverseStruct.Converter(fsigReverse.String())
                 if err != nil {
                     t.Errorf("error: %s", err)
                 } else {
@@ -182,7 +176,7 @@ func FuzzCompose(f *testing.F) {
     // invalid.
     mappers := []struct{
         Name string
-        Mapper morph.StructMapper
+        Mapper morph.FieldMapper
     }{
         {"All", fields.All}, // 0
         {"DeleteNamed", fields.DeleteNamed("FieldTwo")}, // 1
@@ -196,6 +190,8 @@ func FuzzCompose(f *testing.F) {
             input.Name = "$"
             emit(input)
         }},
+        {"TimeToInt64", fields.TimeToInt64}, // 6
+        {"Reverse", fields.Reverse}, // 7
     }
 
     f.Add(-1, -2, -3)
@@ -205,6 +201,9 @@ func FuzzCompose(f *testing.F) {
     f.Add(3, 4, 0)
     f.Add(4, 1, 0)
     f.Add(5, 2, 1)
+    f.Add(0, 6, 6)
+    f.Add(2, 6, 0)
+    f.Add(2, 6, 2)
 
     f.Fuzz(func (t *testing.T, a, b, c int) {
         if (a >= len(mappers)) { return }
@@ -226,20 +225,20 @@ func FuzzCompose(f *testing.F) {
                     Tag:     `tag:"field1"`,
                     Comment: "this is field one",
                 },
-                {Name: "FieldTwo", Type: "int", Value: "$.FieldOne"},
-                {Name: "FieldThree", Type: "time.Time", Value: "time.Now().UTC()"},
+                {Name: "FieldTwo", Type: "int"},
+                {Name: "FieldThree", Type: "time.Time"},
             },
         }
 
-        composedStructResult := must(input.Struct("output", fields.Compose(
+        composedStructResult := input.MapFields(fields.Compose(
             mappers[a].Mapper, mappers[b].Mapper, mappers[c].Mapper,
-        )))
+        )).Map(structs.Rename("Output"))
 
         sequentialStructResult := func(input morph.Struct) morph.Struct {
-            x := must(input.Struct("output", mappers[a].Mapper))
-            y := must(x.Struct("output", mappers[b].Mapper))
-            z := must(y.Struct("output", mappers[c].Mapper))
-            return z
+            x := input.MapFields(mappers[a].Mapper)
+            y := x.MapFields(mappers[b].Mapper)
+            z := y.MapFields(mappers[c].Mapper)
+            return z.Map(structs.Rename("Output"))
         }(input)
 
         if composedStructResult.String() != sequentialStructResult.String() {
@@ -251,15 +250,17 @@ func FuzzCompose(f *testing.F) {
         }
 
         fsig := "InputToOutput(from Input) output"
-        composedFuncResult := must(input.Function(fsig, fields.Compose(
+        composedFuncResult := must(input.
+            MapFields(fields.Compose(
             mappers[a].Mapper, mappers[b].Mapper, mappers[c].Mapper,
-        )))
+        )).Converter(fsig))
 
         sequentialFuncResult := func(input morph.Struct) morph.Function {
-            x := must(input.Struct(input.Name, mappers[a].Mapper))
-            y := must(x.Struct(input.Name, mappers[b].Mapper))
-            z := must(y.Struct(input.Name, mappers[c].Mapper))
-            return must(z.Function(fsig, fields.All))
+            x := input.MapFields(mappers[a].Mapper)
+            y := x.MapFields(mappers[b].Mapper)
+            z := y.MapFields(mappers[c].Mapper)
+            w := z.Map(structs.Rename("Output"))
+            return must(w.Converter(fsig))
         }(input)
 
         if composedFuncResult.String() != sequentialFuncResult.String() {

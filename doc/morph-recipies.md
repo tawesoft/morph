@@ -68,6 +68,8 @@ you could write your own morph.Mapper to convert their types, perhaps to a type
 with a [custom MarshalXml implementation]. See the tutorial, [Mapping 
 Between Go Structs with Morph], for help with this.
 
+***TODO*** *Implement the ...OmitEmpty and ...Lowercase mappers*
+
 ***TODO*** *What if morph could automatically generate code for reflection-free 
 XML and JSON parsers?*
 

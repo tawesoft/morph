@@ -6,13 +6,17 @@ import (
     "github.com/tawesoft/morph/tag"
 )
 
-func Map[X any](fn func(x X) X, xs []X) []X {
+func Must[T any](result T, err error) T {
+    if err == nil { return result } else { panic(err) }
+}
+
+func Map[X, Y any](fn func(x X) Y, xs []X) []Y {
     if xs == nil { return nil }
-    result := make([]X, len(xs))
+    result := make([]Y, len(xs))
     for i := 0; i < len(xs); i++ {
         result[i] = fn(xs[i])
     }
-    return xs
+    return result
 }
 
 func AppendComments(comment string, comments ... string) string {

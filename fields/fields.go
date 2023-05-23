@@ -4,12 +4,11 @@ package fields
 
 import (
     "github.com/tawesoft/morph"
-    "github.com/tawesoft/morph/tag"
 )
 
-// Compose returns a new [morph.StructMapper] that applies each of the given
+// Compose returns a new [morph.FieldMapper] that applies each of the given
 // mappers, from left to right.
-func Compose(mappers ... morph.StructMapper) morph.StructMapper {
+func Compose(mappers ... morph.FieldMapper) morph.FieldMapper {
     return func(input morph.Field, emit func(output morph.Field)) {
         outputs := []morph.Field{input}
         catch := func(out morph.Field) {
@@ -20,7 +19,7 @@ func Compose(mappers ... morph.StructMapper) morph.StructMapper {
             outputs = nil
             for _, in := range fields {
                 emit2 := func(output morph.Field) {
-                    catch(morph.RewriteField(input, output))
+                    catch(output.Rewrite(input))
                 }
                 mapper(in, emit2)
             }
@@ -31,14 +30,14 @@ func Compose(mappers ... morph.StructMapper) morph.StructMapper {
     }
 }
 
-// All is a [morph.StructMapper] that emits every input unchanged.
+// All is a [morph.FieldMapper] that emits every input unchanged.
 func All(input morph.Field, emit func(output morph.Field)) {
     emit(input)
 }
 
-// DeleteNamed returns a new [morph.StructMapper] that removes the named fields
+// DeleteNamed returns a new [morph.FieldMapper] that removes the named fields
 // from a struct.
-func DeleteNamed(names ... string) morph.StructMapper {
+func DeleteNamed(names ... string) morph.FieldMapper {
     // O(1)ish lookup
     nameMap := make(map[string]struct{})
     for _, name := range names {
@@ -51,9 +50,9 @@ func DeleteNamed(names ... string) morph.StructMapper {
     }
 }
 
-// Filter returns a new [morph.StructMapper] that only emits fields where
+// Filter returns a new [morph.FieldMapper] that only emits fields where
 // the provided filter function returns true.
-func Filter(filter func(input morph.Field) bool) morph.StructMapper {
+func Filter(filter func(input morph.Field) bool) morph.FieldMapper {
     return func(input morph.Field, emit func(output morph.Field)) {
         if filter(input) {
             emit(input)
@@ -61,7 +60,7 @@ func Filter(filter func(input morph.Field) bool) morph.StructMapper {
     }
 }
 
-// StripComments is a [morph.StructMapper] that strips all comments from each
+// StripComments is a [morph.FieldMapper] that strips all comments from each
 // input field.
 func StripComments(input morph.Field, emit func(output morph.Field)) {
     output := input
@@ -69,7 +68,7 @@ func StripComments(input morph.Field, emit func(output morph.Field)) {
     emit(output)
 }
 
-// StripTags is a [morph.StructMapper] that strips all struct tags from each
+// StripTags is a [morph.FieldMapper] that strips all struct tags from each
 // input field.
 func StripTags(input morph.Field, emit func(output morph.Field)) {
     output := input
@@ -77,7 +76,7 @@ func StripTags(input morph.Field, emit func(output morph.Field)) {
     emit(output)
 }
 
-// TimeToInt64 is a [morph.StructMapper] that converts any `time.Time` field
+// TimeToInt64 is a [morph.FieldMapper] that converts any `time.Time` field
 // to an `int64` field containing the time in seconds since the Unix epoch.
 //
 // As it is difficult to distinguish between an int64 that's just an integer,
@@ -90,36 +89,26 @@ func TimeToInt64(input morph.Field, emit func(output morph.Field)) {
             Name:    input.Name,
             Type:    "int64",
             Value:   "$.$.UTC().Unix()",
+            Comment: "time in seconds since Unix epoch",
+            Reverse: func(input2 morph.Field, emit func(output morph.Field)) {
+                input2.Type = "time.Time"
+                input2.Value = "time.Unix($.$, 0).UTC()"
+                input2.Comment = input.Comment
+                emit(input2)
+            },
         }
-        f = f.AppendTags(
-            `morph-reverse-type:"time.Time"`,
-            `morph-reverse-value:"time.Unix($.$, 0).UTC()"`,
-        )
-        f = f.AppendComments(
-            "time in seconds since Unix epoch",
-        )
         emit(f)
     } else {
         emit(input)
     }
 }
 
-// Reverse is a [morph.StructMapper] that maps a mapped struct back to its
+// Reverse is a [morph.FieldMapper] that maps a mapped struct back to its
 // original, to the extent that this is possible, by examining the generated
 // "morph-reverse" tags on a generated field.
 func Reverse(input morph.Field, emit func(output morph.Field)) {
-    t := input.Tag
-    reverseType, reverseTypeExists := tag.Lookup(t, "morph-reverse-type")
-    reverseValue, reverseValueExists := tag.Lookup(t, "morph-reverse-value")
-
-    if reverseTypeExists && reverseValueExists {
-        emit(morph.Field{
-            Name:    input.Name,
-            Type:    reverseType,
-            Value:   reverseValue,
-            Tag:     "",
-            Comment: "",
-        })
+    if input.Reverse != nil {
+        input.Reverse(input, emit)
     } else {
         emit(input)
     }

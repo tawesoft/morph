@@ -5,6 +5,7 @@ import (
     "testing"
 
     "github.com/tawesoft/morph"
+    "github.com/tawesoft/morph/structs"
 )
 
 const testSource = `
@@ -50,16 +51,16 @@ func TestStruct_Struct(t *testing.T) {
     // This is a complete end-to-end test.
     tests := []struct{
         input morph.Struct
-        signature string
-        mapper morph.StructMapper
+        name string
+        mapper morph.FieldMapper
         expected string
     }{
         { // test 0
             input:     must(morph.ParseStruct("test.go", testSource, "Apple")),
-            signature: "OrangeFrom$",
+            name:     "Orange",
             mapper:    morphAllFields,
             expected:  formatSource(`
-type OrangeFromApple struct {
+type Orange struct {
     Picked2    maybe.M[time.Time] // comment added by morph
     LastEaten2 maybe.M[time.Time] // comment added by morph
     Weight2    maybe.M[custom.Grams] // comment added by morph
@@ -70,10 +71,10 @@ type OrangeFromApple struct {
         },
         { // test 1
             input:     must(morph.ParseStruct("test.go", testSource, "GenericApple")),
-            signature: "OrangeFrom$[T any, W any, P any]",
+            name:      "Orange",
             mapper:    morphAllFields,
             expected:  formatSource(`
-type OrangeFromGenericApple[T any, W any, P any] struct {
+type Orange[T any, W any, P any] struct {
     Picked2    maybe.M[T] // comment added by morph
     LastEaten2 maybe.M[T] // comment added by morph
     Weight2    maybe.M[W] // comment added by morph
@@ -85,11 +86,10 @@ type OrangeFromGenericApple[T any, W any, P any] struct {
     }
 
     for i, test := range tests {
-        s, err := test.input.Struct(test.signature, test.mapper)
-        if err != nil {
-            t.Errorf("test %d failed: error: %v", i, err)
-            continue
-        }
+        s := test.input.
+            Map(structs.StripComment).
+            MapFields(test.mapper).
+            Map(structs.Rename("Orange"))
         result := strings.TrimSpace(s.String())
         if result != test.expected {
             t.Logf("got:\n%s", result)
@@ -99,40 +99,45 @@ type OrangeFromGenericApple[T any, W any, P any] struct {
     }
 }
 
-func TestStruct_Function(t *testing.T) {
+func TestStruct_Converter(t *testing.T) {
     // This is a complete end-to-end test.
     tests := []struct{
         input morph.Struct
+        name string
         signature string
-        mapper morph.StructMapper
+        mapper morph.FieldMapper
         expected string
     }{
         { // test 0
             input:     must(morph.ParseStruct("test.go", testSource, "Apple")),
-            signature: "AppleToOrange(from Apple) Orange",
+            name:      "Orange",
+            signature: "$FromTo$To($from $From) $To",
             mapper:    morphAllFields,
             expected:  formatSource(`
-func AppleToOrange(from Apple) Orange {
+func AppleToOrange(apple Apple) Orange {
     return Orange{
-        Picked2:    maybe.Some(from.Picked),
-        LastEaten2: maybe.Some(from.LastEaten),
-        Weight2:    maybe.Some(from.Weight),
-        Price2:     maybe.Some(from.Price),
+        Picked2:    maybe.Some(apple.Picked),
+        LastEaten2: maybe.Some(apple.LastEaten),
+        Weight2:    maybe.Some(apple.Weight),
+        Price2:     maybe.Some(apple.Price),
     }
 }`),
         },
     }
 
     for i, test := range tests {
-        s, err := test.input.Function(test.signature, test.mapper)
+        s, err := test.input.
+            Map(structs.Rename(test.name)).
+            MapFields(test.mapper).
+            Converter(test.signature)
         if err != nil {
             t.Errorf("test %d failed: error: %v", i, err)
             continue
         }
         result := s.String()
         if result != test.expected {
-            t.Logf("got:\n%q", result)
-            t.Logf("expected:\n%q", test.expected)
+            t.Logf("got:\n%s", result)
+            t.Logf("expected:\n%s", test.expected)
             t.Errorf("test %d failed: unexpected output", i)
         }
     }

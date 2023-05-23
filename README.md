@@ -6,7 +6,7 @@ Morph
 =====
 
 Morph is a small Go code generator that makes it easy to map between
-Go structs, automatically derive new Go structs, and wrap functions in 
+Go structs, automatically derive new Go structs, and transform functions in 
 different ways.
 
 Features:
@@ -17,13 +17,14 @@ Features:
 
  - no runtime reflection.
 
- - no ugly new struct field tags to learn.
+ - no struct field tags to learn or cause clutter.
 
- - elegant and extremely composable mappings.
+ - elegant and composable building blocks.
 
  - big library of done-for-you mappings and helpers:
-   * [fields] for morphing structs
-   * ***TODO*** funcs for wrapping functions
+   * [fieldmappers] for struct fields
+   * [structmappers] for structs
+   * [functionwrappers] for functions
 
 
 Quick Examples
@@ -31,14 +32,15 @@ Quick Examples
 
 ### Mapping between structs
 
-Take the source code for an example struct, `Apple`:
+Take the source code for an example struct, `Apple`, which uses custom-made
+weight and price packages:
 
 ```go
 type Apple struct {
     Picked    time.Time
     LastEaten time.Time
-    Weight    custom.Grams
-    Price     custom.Price
+    Weight    weight.Weight
+    Price     price.Price
 }
 ```
 
@@ -48,19 +50,31 @@ serialise it to a binary format on disk, or to store it in a database.
 Morph can quickly let us generate:
 
 ```go
+// Orange is like an [Apple], but represented with ints.
 type Orange struct {
     Picked    int64 // time in seconds since Unix epoch
     LastEaten int64 // time in seconds since Unix epoch
-    Weight    int32 // weight in grams
-    Price     int32 // price in pence
+    Weight    int64 // weight in grams
+    Price     int64 // price in pence
 }
 
-func appleToOrange(a Apple) Orange {
+// AppleToOrange converts an Apple to an Orange.
+func AppleToOrange(from Apple) Orange {
     return Orange{
-        Picked:    a.Picked.UTC().Unix(),
-        LastEaten: a.LastEaten.UTC().Unix(),
-        Weight:    int32(a.Weight),
-        Price:     int32(a.Price),
+        Picked:    from.Picked.UTC().Unix(),
+        LastEaten: from.LastEaten.UTC().Unix(),
+        Weight:    from.Weight.Grams(),
+        Price:     from.Price.Pence(),
+    }
+}
+
+// OrangeToApple converts an Orange to an Apple.
+func OrangeToApple(from Orange) Apple {
+    return Apple{
+        Picked:    time.Unix(from.Picked).UTC(),
+        LastEaten: time.Unix(from.LastEaten).UTC(),
+        Weight:    weight.FromGrams(from.Weight),
+        Price:     price.FromPence(from.Price),
     }
 }
 ```
@@ -104,10 +118,25 @@ func (f Fraction) Decimal() (float64, error) { /* ... */ }
 Tutorials
 ---------
 
-* [Mapping between Go structs.]
-* [Wrapping Go functions in different ways.]
-* [Using morph with `go generate`.]
-* [Morph recipes for any occasion.]
+### Structs
+
+* Mapping between Go structs with morph.
+* FieldMapper vs StructMapper
+* Deep copy and deep equals without runtime reflection.
+* Automatically generate custom XML or JSON struct tags.
+* Automatically generate nullable SQL field types for Go structs.
+* Automatically reverse a mapping.
+* Morphing structs with `go generate`.
+
+### Functions
+
+* Transforming Go functions with morph
+  * Binding function arguments.
+  * Partial function application.
+  * Promises.
+  * Methods.
+  * Return values.
+* Morphing functions with `go generate`.
 
 
 Security Model
@@ -116,10 +145,3 @@ Security Model
 WARNING: It is assumed that all inputs are trusted. DO NOT accept arbitrary
 input from untrusted sources under any circumstances, as this will parse
 and generate arbitrary code.
-
-
-[fields]: https://pkg.go.dev/github.com/tawesoft/morph/fields
-[Mapping between Go structs.]: doc/mapping-between-go-structs.md
-[Wrapping Go functions in different ways.]: doc/wrapping-go-functions.md
-[Using morph with `go generate`.]: doc/morph-go-generate.md
-[Morph recipes for any occasion.]: doc/morph-recipies.md

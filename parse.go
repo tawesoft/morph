@@ -8,6 +8,8 @@ import (
     "go/types"
     "strconv"
     "strings"
+
+    "github.com/tawesoft/morph/internal"
 )
 
 // ParseStruct parses a given source file, looking for a struct with the given
@@ -228,7 +230,7 @@ func _fields(fieldList *ast.FieldList, allowEmbedded bool) []Field {
         fieldType := types.ExprString(field.Type)
         var tag string
         if field.Tag != nil {
-            tag = must(strconv.Unquote(field.Tag.Value))
+            tag = internal.Must(strconv.Unquote(field.Tag.Value))
         }
         comment := astText(field.Doc)
         if comment == "" { comment = astText(field.Comment) }

@@ -9,9 +9,8 @@ package tag
 // some string processing.
 
 import (
-    "fmt"
     "strconv"
-	"unicode/utf8"
+    "unicode/utf8"
 )
 
 // Quote is like [strconv.Quote], but uses backticks instead of double
@@ -222,7 +221,6 @@ func Lookup(tag, key string) (value string, ok bool) {
 		qvalue := string(tag[:i+1])
 		tag = tag[i+1:]
 
-        fmt.Printf("compare key %q and name %q\n", key, name)
 		if key == name {
 			value, err := strconv.Unquote(qvalue)
 			if err != nil {
