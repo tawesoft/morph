@@ -5,7 +5,7 @@ import (
     "testing"
 
     "github.com/tawesoft/morph"
-    "github.com/tawesoft/morph/structs"
+    "github.com/tawesoft/morph/structmappers"
 )
 
 const testSource = `
@@ -87,9 +87,9 @@ type Orange[T any, W any, P any] struct {
 
     for i, test := range tests {
         s := test.input.
-            Map(structs.StripComment).
+            Map(structmappers.StripComment).
             MapFields(test.mapper).
-            Map(structs.Rename("Orange"))
+            Map(structmappers.Rename("Orange"))
         result := strings.TrimSpace(s.String())
         if result != test.expected {
             t.Logf("got:\n%s", result)
@@ -127,7 +127,7 @@ func AppleToOrange(apple Apple) Orange {
 
     for i, test := range tests {
         s, err := test.input.
-            Map(structs.Rename(test.name)).
+            Map(structmappers.Rename(test.name)).
             MapFields(test.mapper).
             Converter(test.signature)
         if err != nil {

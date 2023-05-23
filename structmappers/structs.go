@@ -1,9 +1,9 @@
-// Package structs implements some useful transformations from one struct
+// Package structmappers implements some useful transformations from one struct
 // to another, in a "functional options" style for the [morph.Struct.Map]
 // method.
 //
 // Each transformer receives a new copy that it is free to mutate.
-package structs
+package structmappers
 
 import (
     "strings"

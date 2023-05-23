@@ -27,6 +27,8 @@ Features:
    * [functionwrappers] for functions
 
 
+**Status:** *implementation almost complete* 
+
 Quick Examples
 --------------
 

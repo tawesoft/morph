@@ -1,11 +1,11 @@
-package fields_test
+package fieldmappers_test
 
 import (
     "testing"
 
     "github.com/tawesoft/morph"
-    "github.com/tawesoft/morph/fields"
-    "github.com/tawesoft/morph/structs"
+    "github.com/tawesoft/morph/fieldmappers"
+    "github.com/tawesoft/morph/structmappers"
 )
 
 func must[X any](x X, err error) X {
@@ -43,13 +43,13 @@ func Test(t *testing.T) {
                     {Name: "C", Type: "int"},
                 },
             },
-            mapper: fields.Compose(
-                fields.DeleteNamed("A"),
+            mapper: fieldmappers.Compose(
+                fieldmappers.DeleteNamed("A"),
                 func(in morph.Field, emit func(morph.Field)) {
                     emit(in)
                     emit(morph.Field{Name: "$2", Type: "$", Value: "$.$"})
                 },
-                fields.DeleteNamed("B"),
+                fieldmappers.DeleteNamed("B"),
             ),
             expectedStruct: morph.Struct{
                 Name:   "Output",
@@ -78,7 +78,7 @@ func Test(t *testing.T) {
                     {Name: "C", Type: "int"},
                 },
             },
-            mapper: fields.TimeToInt64,
+            mapper: fieldmappers.TimeToInt64,
             expectedStruct: morph.Struct{
                 Name:   "Output",
                 Fields: []morph.Field{
@@ -122,7 +122,7 @@ func Test(t *testing.T) {
         t.Run(test.desc, func(t *testing.T) {
             resultStruct := test.input.
                 MapFields(test.mapper).
-                Map(structs.Rename(test.expectedStruct.Name))
+                Map(structmappers.Rename(test.expectedStruct.Name))
 
             if resultStruct.String() != test.expectedStruct.String() {
                 t.Logf("got struct:\n%s", resultStruct)
@@ -143,8 +143,8 @@ func Test(t *testing.T) {
 
             if test.expectedReverseStruct.Name != "" {
                 resultReverseStruct := resultStruct.
-                    MapFields(fields.Reverse).
-                    Map(structs.Rename(test.expectedReverseStruct.Name))
+                    MapFields(fieldmappers.Reverse).
+                    Map(structmappers.Rename(test.expectedReverseStruct.Name))
                 if resultReverseStruct.String() != test.expectedReverseStruct.String() {
                     t.Logf("got reverse struct:\n%s", resultReverseStruct)
                     t.Logf("expected reverse struct:\n%s", test.expectedReverseStruct)
@@ -178,20 +178,20 @@ func FuzzCompose(f *testing.F) {
         Name string
         Mapper morph.FieldMapper
     }{
-        {"All", fields.All}, // 0
-        {"DeleteNamed", fields.DeleteNamed("FieldTwo")}, // 1
-        {"Filter", fields.Filter(func (field morph.Field) bool { // 2
+        {"All", fieldmappers.All},                             // 0
+        {"DeleteNamed", fieldmappers.DeleteNamed("FieldTwo")}, // 1
+        {"Filter", fieldmappers.Filter(func (field morph.Field) bool { // 2
             return field.Type != "time.Time"
         })},
-        {"StripTags", fields.StripTags}, // 3
-        {"StripComments", fields.StripComments}, // 4
+        {"StripTags", fieldmappers.StripTags},         // 3
+        {"StripComments", fieldmappers.StripComments}, // 4
         {"Duplicate", func(input morph.Field, emit func(output morph.Field)) { // 5
             emit(input)
             input.Name = "$"
             emit(input)
         }},
-        {"TimeToInt64", fields.TimeToInt64}, // 6
-        {"Reverse", fields.Reverse}, // 7
+        {"TimeToInt64", fieldmappers.TimeToInt64}, // 6
+        {"Reverse", fieldmappers.Reverse},         // 7
     }
 
     f.Add(-1, -2, -3)
@@ -230,15 +230,15 @@ func FuzzCompose(f *testing.F) {
             },
         }
 
-        composedStructResult := input.MapFields(fields.Compose(
+        composedStructResult := input.MapFields(fieldmappers.Compose(
             mappers[a].Mapper, mappers[b].Mapper, mappers[c].Mapper,
-        )).Map(structs.Rename("Output"))
+        )).Map(structmappers.Rename("Output"))
 
         sequentialStructResult := func(input morph.Struct) morph.Struct {
             x := input.MapFields(mappers[a].Mapper)
             y := x.MapFields(mappers[b].Mapper)
             z := y.MapFields(mappers[c].Mapper)
-            return z.Map(structs.Rename("Output"))
+            return z.Map(structmappers.Rename("Output"))
         }(input)
 
         if composedStructResult.String() != sequentialStructResult.String() {
@@ -251,15 +251,16 @@ func FuzzCompose(f *testing.F) {
 
         fsig := "InputToOutput(from Input) output"
         composedFuncResult := must(input.
-            MapFields(fields.Compose(
-            mappers[a].Mapper, mappers[b].Mapper, mappers[c].Mapper,
-        )).Converter(fsig))
+            MapFields(fieldmappers.Compose(
+                mappers[a].Mapper, mappers[b].Mapper, mappers[c].Mapper,
+            )).
+            Converter(fsig))
 
         sequentialFuncResult := func(input morph.Struct) morph.Function {
             x := input.MapFields(mappers[a].Mapper)
             y := x.MapFields(mappers[b].Mapper)
             z := y.MapFields(mappers[c].Mapper)
-            w := z.Map(structs.Rename("Output"))
+            w := z.Map(structmappers.Rename("Output"))
             return must(w.Converter(fsig))
         }(input)
 

@@ -1,3 +1,6 @@
+// Package tag provides useful features for manipulating struct field tags.
+//
+// This is based mostly on stdlib code, copyright 2009 The Go Authors.
 package tag
 
 // This file contains code Copyright 2009 The Go Authors. All rights reserved.

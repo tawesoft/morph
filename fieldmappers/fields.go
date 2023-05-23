@@ -1,6 +1,6 @@
-// Package fields provides helpful composable functions that implement
+// Package fieldmappers provides helpful composable functions that implement
 // [morph.FieldMapper] for mapping the fields between two structs using morph.
-package fields
+package fieldmappers
 
 import (
     "github.com/tawesoft/morph"
