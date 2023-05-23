@@ -175,11 +175,11 @@ func parseFunctionSignature(
 
 // singleReturn returns the return type for a FunctionSignature and true when
 // there is exactly one return value, or (_, false) otherwise.
-func (f FunctionSignature) singleReturn() (Field, bool) {
-    if len(f.Returns) != 1 {
+func (fs FunctionSignature) singleReturn() (Field, bool) {
+    if len(fs.Returns) != 1 {
         return Field{}, false
     }
-    return f.Returns[0], true
+    return fs.Returns[0], true
 }
 
 // parseFunctionSignatureFromString parses the source code of a single function

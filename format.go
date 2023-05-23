@@ -93,8 +93,16 @@ func writeSimpleTypeExprList(buf *bytes.Buffer, list []ast.Expr) bool {
     return true
 }
 
-// _function_string implements the Function.String method
-func _function_string(fn Function) string {
+// String formats a function or method as Go source code.
+//
+// For example, gives a result like:
+//
+//     // Foo bars a baz.
+//     func Foo(baz Baz) Bar {
+//         /* function body */
+//     }
+//
+func (fn Function) String() string {
     var sb strings.Builder
     comment := fn.Signature.Comment
     if len(comment) > 0 {
@@ -118,39 +126,38 @@ func _function_string(fn Function) string {
     return string(out)
 }
 
-// _functionSignature_string implements the FunctionSignature.String method.
-//
-// It omits the leading "func" keyword.
-func _functionSignature_string(fn FunctionSignature) string {
+// String formats the function signature as Go source code, omitting the
+// leading "func" keyword.
+func (fs FunctionSignature) String() string {
     var sb bytes.Buffer
-    if fn.Receiver.Type != "" {
-        reciever := fmt.Sprintf("(%s %s) ", fn.Receiver.Name, fn.Receiver.Type)
+    if fs.Receiver.Type != "" {
+        reciever := fmt.Sprintf("(%s %s) ", fs.Receiver.Name, fs.Receiver.Type)
         sb.WriteString(reciever)
     }
-    sb.WriteString(fn.Name)
-    if len(fn.Type) > 0 {
+    sb.WriteString(fs.Name)
+    if len(fs.Type) > 0 {
         sb.WriteRune('[')
-        for i, arg := range fn.Type {
+        for i, arg := range fs.Type {
             sb.WriteString(arg.Name)
             sb.WriteRune(' ')
             sb.WriteString(arg.Type)
-            if (i < len(fn.Type) - 1) {
+            if (i < len(fs.Type) - 1) {
                 sb.WriteRune(',')
             }
         }
         sb.WriteRune(']')
     }
     sb.WriteRune('(')
-    for _, arg := range fn.Arguments {
+    for _, arg := range fs.Arguments {
         sb.WriteString(arg.Name)
         sb.WriteRune(' ')
         sb.WriteString(arg.Type)
         sb.WriteRune(',')
     }
     sb.WriteRune(')')
-    if len(fn.Returns) > 0 {
+    if len(fs.Returns) > 0 {
         sb.WriteString(" (")
-        for _, arg := range fn.Returns {
+        for _, arg := range fs.Returns {
             sb.WriteString(arg.Name)
             sb.WriteRune(' ')
             sb.WriteString(arg.Type)
@@ -161,8 +168,11 @@ func _functionSignature_string(fn FunctionSignature) string {
     return sb.String()
 }
 
-// _struct_signature implements the Struct.Signature method.
-func _struct_signature(s Struct) string {
+// Signature returns the Go type signature of a struct as a string, including
+// any generic type constraints, omitting the "type" and "struct" keywords.
+//
+// For example, returns a result like "Orange" or "Orange[X, Y any]".
+func (s Struct) Signature() string {
     var sb strings.Builder
     sb.WriteString(s.Name)
     if len(s.TypeParams) > 0 {
@@ -180,8 +190,16 @@ func _struct_signature(s Struct) string {
     return sb.String()
 }
 
-// _struct_string implements the Struct.String method.
-func _struct_string(s Struct) string {
+// String returns a Go source code representation of the given struct.
+//
+// For example, returns a result like:
+//
+//     // Foo is a thing that bars.
+//     type Foo struct {
+//         Field Type `tag:"value"` // Comment
+//     }
+//
+func (s Struct) String() string {
     var sb bytes.Buffer
     if len(s.Comment) > 0 {
         for _, line := range strings.Split(s.Comment, "\n") {
@@ -229,9 +247,9 @@ func _struct_string(s Struct) string {
     return string(out)
 }
 
-// _struct_function_Body creates the Body argument for a Function created
-// by the Struct.Function method.
-func _struct_function_Body(returnType string, assignments []Field) string {
+// formatStructConverterFunc formats the function body created by the
+// [Struct.Converter] method.
+func formatStructConverterFunc(returnType string, assignments []Field) string {
     // source code representation
     var sb bytes.Buffer
     sb.WriteString("\treturn ")

@@ -12,10 +12,11 @@ import (
 )
 
 // Compose returns a new [morph.StructMapper] that applies each of the given
-// mappers, from left to right.
+// non-nil mappers, from left to right. Nil mappers are skipped.
 func Compose(mappers ... morph.StructMapper) morph.StructMapper {
     return func(in morph.Struct) morph.Struct {
         for _, mapper := range mappers {
+            if mapper == nil { continue }
             in = mapper(in)
         }
         return in

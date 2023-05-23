@@ -7,7 +7,7 @@ import (
 )
 
 // Compose returns a new [morph.FieldMapper] that applies each of the given
-// mappers, from left to right.
+// non-nil mappers, from left to right. Nil mappers are skipped.
 func Compose(mappers ... morph.FieldMapper) morph.FieldMapper {
     return func(input morph.Field, emit func(output morph.Field)) {
         outputs := []morph.Field{input}
@@ -15,6 +15,7 @@ func Compose(mappers ... morph.FieldMapper) morph.FieldMapper {
             outputs = append(outputs, out)
         }
         for _, mapper := range mappers {
+            if mapper == nil { continue }
             fields := outputs
             outputs = nil
             for _, in := range fields {
@@ -80,9 +81,8 @@ func StripTags(input morph.Field, emit func(output morph.Field)) {
 // to an `int64` field containing the time in seconds since the Unix epoch.
 //
 // As it is difficult to distinguish between an int64 that's just an integer,
-// and an int64 that used to be a time, this adds "morph-reverse" field
-// tags to the output field. This allows [Reverse] to automatically perform the
-// reverse mapping.
+// and an int64 that used to be a time, this sets a Reverse method on output
+// field. This allows [Reverse] to automatically perform the reverse mapping.
 func TimeToInt64(input morph.Field, emit func(output morph.Field)) {
     if input.Type == "time.Time" {
         f := morph.Field{
@@ -90,12 +90,12 @@ func TimeToInt64(input morph.Field, emit func(output morph.Field)) {
             Type:    "int64",
             Value:   "$.$.UTC().Unix()",
             Comment: "time in seconds since Unix epoch",
-            Reverse: func(input2 morph.Field, emit func(output morph.Field)) {
+            Reverse: Compose(func(input2 morph.Field, emit func(output morph.Field)) {
                 input2.Type = "time.Time"
                 input2.Value = "time.Unix($.$, 0).UTC()"
                 input2.Comment = input.Comment
                 emit(input2)
-            },
+            }, input.Reverse),
         }
         emit(f)
     } else {

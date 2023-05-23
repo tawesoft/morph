@@ -36,21 +36,45 @@ type FunctionSignature struct {
     Receiver  Field
 }
 
+// matchingInput searches the function receiver and input arguments, in order,
+// for the first instance of an input matching the provided type, or a pointer
+// of the provided type. Type constraints are ignored.
+func (fs FunctionSignature) matchingInput(Type string) (match Field, found bool) {
+    var args []Field
+    if fs.Receiver.Type != "" {
+        args = append(args, fs.Receiver)
+    }
+    args = append(args, fs.Arguments...)
+
+    args = filterFields(args, func(f Field) bool {
+        x, err := parser.ParseExpr(f.Type)
+        if err != nil {
+            return false
+        }
+        s, ok := simpleTypeExpr(x)
+        if !ok {
+            return false
+        }
+        // trim type constraints to ignore them
+        {
+            idx := strings.IndexByte(s, '[')
+            if idx > 0 {
+                s = s[0:idx]
+            }
+        }
+        return (s == Type) || (s == "*"+Type)
+    })
+    if len(args) < 1 {
+        return Field{}, false
+    }
+    return args[0], true // first one wins
+}
+
 // Function contains a parsed function signature and the raw source code of
 // its body, excluding the enclosing "{" and "}" braces.
 type Function struct {
     Signature FunctionSignature
     Body string
-}
-
-func (fn Function) String() string {
-    return _function_string(fn)
-}
-
-// String formats the function signature as a string. It does not include
-// the leading "func" keyword.
-func (fn FunctionSignature) String() string {
-    return _functionSignature_string(fn)
 }
 
 // FunctionWrapper represents a constructed wrapper around a user-supplied
@@ -137,6 +161,11 @@ type FunctionWrapper struct {
 //
 // Fields are always passed by value, so it is safe to mutate an input field
 // argument anywhere.
+//
+// When creating a Reverse FieldMapper, care should be taken to not overwrite
+// a field's existing Reverse. This can be achieved by composing the two
+// functions with the Compose function in the fieldmappers sub package, e.g.
+// `NewField.Reverse = fieldmappers.Compose(newfunc, OldField.Reverse))`.
 type Field struct {
     Name     string
     Type     string
@@ -170,6 +199,20 @@ func (f Field) AppendTags(tags ... string) Field {
 // Note that this does not modify the field the method is called on.
 func (f Field) AppendComments(comments ... string) Field {
     f.Comment = internal.AppendComments(f.Comment, comments...)
+    return f
+}
+
+// Rewrite performs the special '$' replacement described by FieldMapper.
+//
+// Note that a remaining "$." in a field value remains present and is not
+// rewritten until generating a function, as it requires the name of a function
+// argument to be known.
+//
+// TODO ignore $ inside string or rune literals
+func (f Field) Rewrite(input Field) Field {
+    f.Name  = strings.ReplaceAll(f.Name, "$", input.Name)
+    f.Type  = strings.ReplaceAll(f.Type, "$", input.Type)
+    f.Value = strings.ReplaceAll(f.Value, ".$", "."+input.Name)
     return f
 }
 
@@ -229,17 +272,6 @@ type Struct struct {
     Fields     []Field
 }
 
-// Signature returns the type signature of a struct as a string, including any
-// generic type constraints, omitting the "type" and "struct" keywords.
-func (s Struct) Signature() string {
-    return _struct_signature(s)
-}
-
-// String returns a source code representation of the given struct.
-func (s Struct) String() string {
-    return _struct_string(s)
-}
-
 // Copy returns a (deep) copy of a Struct, ensuring that slices aren't aliased.
 func (s Struct) Copy() Struct {
     ss := Struct{
@@ -260,6 +292,7 @@ func (s Struct) Map(mappers ... StructMapper) Struct {
         ss = ss.Copy()
     }
     for _, t := range mappers {
+        if t == nil { continue }
         ss = t(ss)
     }
     return ss
@@ -313,11 +346,53 @@ type StructMapper func(in Struct) Struct
 func (s Struct) Converter(
     signature string,
 ) (Function, error) {
-    return _struct_converter(s, signature)
+    if s.From == "" { s.From = s.Name } // shallow copy is fine here
+    signature = rewriteSignatureString(signature, s.From, s.Name)
+
+    esc := func(err error) (Function, error) {
+        return Function{}, fmt.Errorf(
+            "error creating morph.Struct.Converter function for type %q -> %q: %w",
+            s.From, s.Name, err,
+        )
+    }
+
+    fs, err := parseFunctionSignatureFromString(signature)
+    if err != nil {
+        return esc(fmt.Errorf("error parsing function signature: %w", err))
+    }
+
+    inputArg, ok := fs.matchingInput(s.From)
+    if !ok {
+        return esc(fmt.Errorf(
+            "function signature %q must include an input of type %q or *%q",
+            signature, s.From, s.From,
+        ))
+    }
+
+    returns, ok := fs.singleReturn()
+    if (!ok) || ((returns.Type != s.Name) && (returns.Type != "*"+s.Name)) {
+        panic(fmt.Errorf(
+            "function signature %q must have a single return value of type %q or *%q; got %q",
+            signature, s.Name, s.Name, returns.Type,
+        ))
+    }
+
+    assignments := internal.Map(func(f Field) Field {
+        return postRewriteField(inputArg.Name, f)
+    }, s.Fields)
+
+    body := formatStructConverterFunc(returns.Type, assignments)
+
+    fs.Comment = fmt.Sprintf("%s converts [%s] to [%s].", fs.Name, s.From, s.Name)
+    return Function{
+        Signature: fs,
+        Body:      body,
+    }, nil
 }
 
-// rewriteSignature performs the special '$' replacement in a signature
-func rewriteSignature(sig string, from string, to string) string {
+// rewriteSignatureString performs the special '$' replacement in a function
+// signature specified as a string.
+func rewriteSignatureString(sig string, from string, to string) string {
     lower := func(x string) string {
         if len(x) == 0 { return x }
         if len(x) == 1 { strings.ToLower(x) }
@@ -329,28 +404,10 @@ func rewriteSignature(sig string, from string, to string) string {
     return sig
 }
 
-// Rewrite performs the special '$' replacement described by FieldMapper.
+// postRewriteField performs the special '$.' replacement described by
+// FieldMapper.
 //
-// Note that a remaining "$." in a field value remains present and is not
-// rewritten until generating a function, as it requires the name of a function
-// argument to be known.
-//
-// TODO ignore $ inside string or rune literals
-func (f Field) Rewrite(input Field) Field {
-    return Field{
-        Name:     strings.ReplaceAll(f.Name, "$", input.Name),
-        Type:     strings.ReplaceAll(f.Type, "$", input.Type),
-        Value:    strings.ReplaceAll(f.Value, ".$", "."+input.Name),
-        Tag:      f.Tag,
-        Comment:  f.Comment,
-        Comparer: f.Comparer,
-        Reverse:  f.Reverse,
-    }
-}
-
-// postRewriteField performs the special '$' replacement described by StructMapper
-//
-// TODO ignore $ inside string or rune literals
+// TODO ignore "$." inside string or rune literals
 func postRewriteField(argName string, output Field) Field {
     output.Value = strings.ReplaceAll(output.Value, "$.", argName + ".")
     return output
@@ -361,96 +418,4 @@ func collector(dest *[]Field) func(output Field) {
     return func(output Field) {
         *dest = append(*dest, output)
     }
-}
-
-/*
-// _struct implements the [Struct.Struct] method.
-func (source Struct) _struct(signature string, mapper FieldMapper) (result Struct, err error) {
-
-    signature = rewriteSignature(signature, source.Name)
-
-    // allow user-defined morpher to panic
-    defer func() {
-        if r := recover(); r != nil {
-            err = fmt.Errorf("error morphing struct %s to struct %q: %v", source.Name, signature, r)
-        }
-    }()
-
-    src := `package temp; type ` + signature + ` struct {}`
-    result = internal.Must(ParseStruct("temp.go", src, ""))
-}
-*/
-
-// _struct_function implements the Struct.Converter method
-func _struct_converter(source Struct, signature string) (f Function, err error) {
-    if source.From == "" { source.From = source.Name }
-    signature = rewriteSignature(signature, source.From, source.Name)
-
-    // allow user-defined morpher to panic
-    defer func() {
-        if r := recover(); r != nil {
-            err = fmt.Errorf("error generating morph func %q for struct %q: %v", signature, source.Name, r)
-        }
-    }()
-
-    fn := internal.Must(parseFunctionSignatureFromString(signature))
-
-    // First we need to find the name of the first input argument that has
-    // a type that matches the source, ignoring type constraints.
-    var args []Field
-    args = append(args, fn.Receiver)
-    args = append(args, fn.Arguments...)
-    args = filterFields(args, func(f Field) bool {
-        x, err := parser.ParseExpr(f.Type)
-        if err != nil {
-            return false
-        }
-        s, ok := simpleTypeExpr(x)
-        if !ok {
-            return false
-        }
-        // trim type constraints to ignore them
-        {
-            idx := strings.IndexByte(s, '[')
-            if idx > 0 {
-                s = s[0:idx]
-            }
-        }
-        return (s == source.From) || (s == "*"+source.From)
-    })
-    if len(args) < 1 {
-        panic(fmt.Errorf("could not find matching argument for source %q", source.Name))
-    }
-    inputArg := args[0] // first one wins
-
-    // we also need to find the return argument
-    returns, ok := fn.singleReturn()
-    if !ok {
-        panic(fmt.Errorf("FunctionSignature must have single return value"))
-    }
-
-    var assignments = make([]Field, len(source.Fields))
-
-    for i, field := range source.Fields {
-        assignments[i] = postRewriteField(inputArg.Name, field)
-    }
-
-    /*
-    emit := collector(&assignments)
-    for _, input := range source.Fields {
-        emit2 := func(output Field) {
-            emit(RewriteField(input, output))
-        }
-        mapper(input, emit2)
-    }
-    for i := 0; i < len(assignments); i++ {
-        assignments[i] = postRewriteField(inputArg.Name, assignments[i])
-    }
-     */
-
-    fn.Comment = fmt.Sprintf("%s converts [%s] to [%s].", fn.Name, source.From, source.Name)
-    return Function{
-        Signature: fn,
-        Body:      _struct_function_Body(returns.Type, assignments),
-    }, nil
 }
