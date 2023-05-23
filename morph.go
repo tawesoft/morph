@@ -448,6 +448,7 @@ func _struct_converter(source Struct, signature string) (f Function, err error) 
     }
      */
 
+    fn.Comment = fmt.Sprintf("%s converts [%s] to [%s].", fn.Name, source.From, source.Name)
     return Function{
         Signature: fn,
         Body:      _struct_function_Body(returns.Type, assignments),

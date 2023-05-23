@@ -16,11 +16,13 @@ func must[X any](x X, err error) X {
 func Test(t *testing.T) {
     fsig := morph.FunctionSignature{
         Name:      "InputToOutput",
+        Comment:   "InputToOutput converts [Input] to [Output].",
         Arguments: []morph.Field{{Name: "from", Type: "Input"}},
         Returns:   []morph.Field{{Type: "Output"}},
     }
     fsigReverse := morph.FunctionSignature{
         Name:      "OutputToInput",
+        Comment:   "OutputToInput converts [Output] to [Input].",
         Arguments: []morph.Field{{Name: "from", Type: "Output"}},
         Returns:   []morph.Field{{Type: "Input"}},
     }
@@ -204,6 +206,8 @@ func FuzzCompose(f *testing.F) {
     f.Add(0, 6, 6)
     f.Add(2, 6, 0)
     f.Add(2, 6, 2)
+    f.Add(6, 7, 6)
+    f.Add(7, 7, 7)
 
     f.Fuzz(func (t *testing.T, a, b, c int) {
         if (a >= len(mappers)) { return }
@@ -249,11 +253,11 @@ func FuzzCompose(f *testing.F) {
             )
         }
 
-        fsig := "InputToOutput(from Input) output"
+        fsig := "InputToOutput(from Input) Output"
         composedFuncResult := must(input.
             MapFields(fieldmappers.Compose(
                 mappers[a].Mapper, mappers[b].Mapper, mappers[c].Mapper,
-            )).
+            )).Map(structmappers.Rename("Output")).
             Converter(fsig))
 
         sequentialFuncResult := func(input morph.Struct) morph.Function {

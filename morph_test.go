@@ -114,6 +114,7 @@ func TestStruct_Converter(t *testing.T) {
             signature: "$FromTo$To($from $From) $To",
             mapper:    morphAllFields,
             expected:  formatSource(`
+// AppleToOrange converts [Apple] to [Orange].
 func AppleToOrange(apple Apple) Orange {
     return Orange{
         Picked2:    maybe.Some(apple.Picked),
