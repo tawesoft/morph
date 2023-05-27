@@ -1,16 +1,11 @@
 package morph_test
 
 import (
-    "go/format"
-    "strings"
     "testing"
 
     "github.com/tawesoft/morph"
+    "github.com/tawesoft/morph/internal"
 )
-
-func formatSource(s string) string {
-    return strings.TrimSpace(string(must(format.Source([]byte(s)))))
-}
 
 func TestStruct_String(t *testing.T) {
     tests := []struct{
@@ -40,7 +35,7 @@ func TestStruct_String(t *testing.T) {
                     },
                 },
             },
-            Expected: formatSource(`
+            Expected: internal.FormatSource(`
 // Comment.
 // Multiline.
 type Name[X any] struct {
@@ -62,7 +57,7 @@ type Name[X any] struct {
     }
 }
 
-func TestFunction_String_String(t *testing.T) {
+func TestFunction_String(t *testing.T) {
     tests := []struct{
         Input morph.Function
         Expected string
@@ -75,7 +70,7 @@ func TestFunction_String_String(t *testing.T) {
                 },
                 Body: `panic("not implemented")`,
             },
-            Expected: formatSource(`
+            Expected: internal.FormatSource(`
 // Foo is a function that panics.
 func Foo() {
     panic("not implemented")
@@ -102,7 +97,7 @@ func Foo() {
                 },
                 Body: `panic("not implemented")`,
             },
-            Expected: formatSource(`
+            Expected: internal.FormatSource(`
 // Foo is a complicated function.
 // Multiline comment.
 func Foo[X any, Y interface{}, Z interface{~[]Y}](i maybe.M[X], j either.E[Y, Z]) (named1 int, named2 bool) {
@@ -121,7 +116,7 @@ func Foo[X any, Y interface{}, Z interface{~[]Y}](i maybe.M[X], j either.E[Y, Z]
                 },
                 Body: `panic("not implemented")`,
             },
-            Expected: formatSource(`
+            Expected: internal.FormatSource(`
 // Bar is a method on a Foo
 func (f *Foo[X]) Bar() {
     panic("not implemented")
@@ -136,5 +131,96 @@ func (f *Foo[X]) Bar() {
             t.Logf("expected %q", test.Expected)
             t.Errorf("test %d failed", i)
         }
+    }
+}
+
+func TestWrappedFunction_String(t *testing.T) {
+    divide := morph.Function{
+        Signature: morph.FunctionSignature{
+            Name:      "Divide",
+            Comment:   "Divide returns a divided by b. It is an error to divide by zero.",
+            Arguments: []morph.Field{
+                {Name: "a", Type: "float64"},
+                {Name: "b", Type: "float64"},
+            },
+            Returns:   []morph.Field{
+                {Name: "value", Type: "float64"},
+                {Name: "err",   Type: "error"},
+            },
+        },
+        Body: `
+    if b == 0.0 {
+        return 0, DivideByZeroError
+    } else {
+        return a / b, nil
+    }
+`,
+    }.Wrap()
+
+    tests := []struct{
+        wrapped morph.WrappedFunction
+        expected string
+    }{
+        {
+            wrapped: morph.WrappedFunction{
+                Signature: morph.FunctionSignature{
+                    Comment:   "$ returns the result of [Divide] with the result rewritten as (value, err == nil).",
+                    Name:      "Divide_ReturnValueOk",
+                    Arguments: []morph.Field{
+                        {Name: "a", Type: "float64"},
+                        {Name: "b", Type: "float64"},
+                    },
+                    Returns:   []morph.Field{
+                        {Type: "float64"},
+                        {Type: "bool"},
+                    },
+                },
+                Inputs: morph.ArgRewriter{
+                    Capture: []morph.Field{
+                        {Name: "a", Type: "float64", Value: "$a",},
+                        {Name: "b", Type: "float64", Value: "$b",},
+                    },
+                    Formatter: "$a, $b",
+                },
+                Outputs: morph.ArgRewriter{
+                    Capture: []morph.Field{
+                        {Name: "f",  Type: "float64", Value: "$value"},
+                        {Name: "ok", Type: "bool",    Value: "$err == nil"},
+                    },
+                    Formatter: "$f, $ok",
+                },
+                Wraps: &divide,
+            },
+            expected: `
+// Divide_ReturnValueOk returns the result of [Divide] with the result rewritten as (value, err == nil).
+func Divide_ReturnValueOk(a float64, b float64) (float64, bool) {
+    _in0 := a // accessible as $0 or $a
+    _in1 := b // accessible as $1 or $b
+
+    _r0, _r1 := Divide(_in0, _in1) // results accessible as $value, $err
+
+    _out0 := value      // accessible as $0 or $f
+    _out1 := err == nil // accessible as $1 or $ok
+
+    return _out0, _out1
+}
+`,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.wrapped.Signature.Name, func(t *testing.T) {
+            result, err := tt.wrapped.Format()
+            if err != nil {
+                t.Errorf("error formatting wrapped function: %s", err)
+            }
+
+            expected := internal.FormatSource(tt.expected)
+            if result != expected {
+                t.Logf("got %+v", result)
+                t.Logf("expected %+v", expected)
+                t.Errorf("wrapped function does not format as expected")
+            }
+        })
     }
 }

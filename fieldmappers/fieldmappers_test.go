@@ -5,13 +5,9 @@ import (
 
     "github.com/tawesoft/morph"
     "github.com/tawesoft/morph/fieldmappers"
+    "github.com/tawesoft/morph/internal"
     "github.com/tawesoft/morph/structmappers"
 )
-
-func must[X any](x X, err error) X {
-    if err != nil { panic(err) }
-    return x
-}
 
 func Test(t *testing.T) {
     fsig := morph.FunctionSignature{
@@ -254,7 +250,7 @@ func FuzzCompose(f *testing.F) {
         }
 
         fsig := "InputToOutput(from Input) Output"
-        composedFuncResult := must(input.
+        composedFuncResult := internal.Must(input.
             MapFields(fieldmappers.Compose(
                 mappers[a].Mapper, mappers[b].Mapper, mappers[c].Mapper,
             )).Map(structmappers.Rename("Output")).
@@ -265,7 +261,7 @@ func FuzzCompose(f *testing.F) {
             y := x.MapFields(mappers[b].Mapper)
             z := y.MapFields(mappers[c].Mapper)
             w := z.Map(structmappers.Rename("Output"))
-            return must(w.Converter(fsig))
+            return internal.Must(w.Converter(fsig))
         }(input)
 
         if composedFuncResult.String() != sequentialFuncResult.String() {

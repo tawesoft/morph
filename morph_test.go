@@ -5,6 +5,7 @@ import (
     "testing"
 
     "github.com/tawesoft/morph"
+    "github.com/tawesoft/morph/internal"
     "github.com/tawesoft/morph/structmappers"
 )
 
@@ -28,11 +29,6 @@ type GenericApple[T any, W any, P any] struct {
 }
 `
 
-func must[X any](x X, err error) X {
-    if err != nil { panic(err) }
-    return x
-}
-
 func morphAllFields(input morph.Field, emit func(output morph.Field)) {
     input = input.AppendComments("comment added by morph")
     if len(input.Tag) > 0 {
@@ -47,7 +43,7 @@ func morphAllFields(input morph.Field, emit func(output morph.Field)) {
     })
 }
 
-func TestStruct_Struct(t *testing.T) {
+func TestStruct_Map(t *testing.T) {
     // This is a complete end-to-end test.
     tests := []struct{
         input morph.Struct
@@ -56,10 +52,10 @@ func TestStruct_Struct(t *testing.T) {
         expected string
     }{
         { // test 0
-            input:     must(morph.ParseStruct("test.go", testSource, "Apple")),
+            input:     internal.Must(morph.ParseStruct("test.go", testSource, "Apple")),
             name:     "Orange",
             mapper:    morphAllFields,
-            expected:  formatSource(`
+            expected:  internal.FormatSource(`
 type Orange struct {
     Picked2    maybe.M[time.Time] // comment added by morph
     LastEaten2 maybe.M[time.Time] // comment added by morph
@@ -70,10 +66,10 @@ type Orange struct {
 }`),
         },
         { // test 1
-            input:     must(morph.ParseStruct("test.go", testSource, "GenericApple")),
+            input:     internal.Must(morph.ParseStruct("test.go", testSource, "GenericApple")),
             name:      "Orange",
             mapper:    morphAllFields,
-            expected:  formatSource(`
+            expected:  internal.FormatSource(`
 type Orange[T any, W any, P any] struct {
     Picked2    maybe.M[T] // comment added by morph
     LastEaten2 maybe.M[T] // comment added by morph
@@ -109,11 +105,11 @@ func TestStruct_Converter(t *testing.T) {
         expected string
     }{
         { // test 0
-            input:     must(morph.ParseStruct("test.go", testSource, "Apple")),
+            input:     internal.Must(morph.ParseStruct("test.go", testSource, "Apple")),
             name:      "Orange",
             signature: "$FromTo$To($from $From) $To",
             mapper:    morphAllFields,
-            expected:  formatSource(`
+            expected:  internal.FormatSource(`
 // AppleToOrange converts [Apple] to [Orange].
 func AppleToOrange(apple Apple) Orange {
     return Orange{

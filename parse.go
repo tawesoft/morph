@@ -86,11 +86,11 @@ func ParseStruct(filename string, src any, name string) (result Struct, err erro
 // ParseFunctionSignature does not look for any methods on a type. For this,
 // use [ParseMethodSignature] instead.
 //
-// If src != nil, ParseFunction parses the source from src and the filename is
-// only used when recording position information. The type of the argument for
-// the src parameter must be string, []byte, or io.Reader. If src == nil,
-// instead parses the file specified by filename. This matches the behavior of
-// [go.Parser/ParseFile].
+// If src != nil, ParseFunctionSignature parses the source from src and the
+// filename is only used when recording position information. The type of the
+// argument for the src parameter must be string, []byte, or io.Reader. If src
+// == nil, instead parses the file specified by filename. This matches the
+// behavior of [go.Parser/ParseFile].
 //
 // Parsing is performed without full object resolution. This means parsing will
 // still succeed even on some files that may not actually compile.
@@ -102,6 +102,15 @@ func ParseFunctionSignature(filename string, src any, name string) (result Funct
 
 // ParseFirstFunctionSignature is like [ParseFunctionSignature], except it will
 // return the first function found (including methods).
+//
+// If src != nil, ParseFirstFunctionSignature parses the source from src and
+// the filename is only used when recording position information. The type of
+// the argument for the src parameter must be string, []byte, or io.Reader. If
+// src == nil, instead parses the file specified by filename. This matches the
+// behavior of [go.Parser/ParseFile].
+//
+// Parsing is performed without full object resolution. This means parsing will
+// still succeed even on some files that may not actually compile.
 func ParseFirstFunctionSignature(filename string, src any) (result FunctionSignature, err error) {
     return parseFunctionSignature(filename, src, func(sig FunctionSignature) bool {
         return true
@@ -109,17 +118,24 @@ func ParseFirstFunctionSignature(filename string, src any) (result FunctionSigna
 }
 
 // ParseMethodSignature is like [ParseFunctionSignature], except it will match
-// functions that are methods on the given type. Unlike ParseFunctionSignature,
-// it does not have any special behaviour
+// functions that are methods on the given type.
+//
+// If src != nil, ParseFunction parses the source from src and the filename is
+// only used when recording position information. The type of the argument for
+// the src parameter must be string, []byte, or io.Reader. If src == nil,
+// instead parses the file specified by filename. This matches the behavior of
+// [go.Parser/ParseFile].
 //
 // For example, to look for a method signature such as `func (foo *Bar) Baz()`,
 // i.e. method Baz on type Bar with a pointer receiver, then set the name
 // argument to "Baz" and the type argument to either "Bar" or "*Bar" (it
 // doesn't matter which). Generic type constraints are ignored.
+//
+// Parsing is performed without full object resolution. This means parsing will
+// still succeed even on some files that may not actually compile.
 func ParseMethodSignature(filename string, src any, Type string, name string) (result FunctionSignature, err error) {
     return parseFunctionSignature(filename, src, func(sig FunctionSignature) bool {
-        return (name == sig.Name) && (sig.Receiver.Type == Type)
-        // TODO pointer check and ignore type constraints
+        return (name == sig.Name) && sig.Receiver.matchSimpleType(Type)
     })
 }
 

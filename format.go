@@ -2,12 +2,15 @@ package morph
 
 import (
     "bytes"
+    "errors"
     "fmt"
     "go/ast"
     "go/format"
     "go/token"
+    "strconv"
     "strings"
 
+    "github.com/tawesoft/morph/internal"
     "github.com/tawesoft/morph/tag"
 )
 
@@ -18,14 +21,22 @@ func formatSource(source string) (string, error) {
 }
 
 // simpleTypeExpr returns a type formatted as a string if the type is simple
-// (i.e. not a map, slice, channel etc.). Otherwise, returns (_, false).
+// (i.e. not a map, slice, channel etc.), with any type constraints removed.
+// Otherwise, returns (_, false).
 //
 // This is used to find the first FunctionSignature argument (or receiver) that
 // matches a given type.
 func simpleTypeExpr(x ast.Expr) (string, bool) {
     var buf bytes.Buffer
     ok := writeSimpleTypeExpr(&buf, x)
-    return buf.String(), ok
+    if !ok { return "", false }
+    s := buf.String()
+    // trim type constraints to ignore them
+    idx := strings.IndexByte(s, '[')
+    if idx > 0 {
+        s = s[0:idx]
+    }
+    return s, true
 }
 
 // writeSimpleTypeExpr is a shortened version of [types.ExprString] used by
@@ -105,6 +116,7 @@ func writeSimpleTypeExprList(buf *bytes.Buffer, list []ast.Expr) bool {
 func (fn Function) String() string {
     var sb strings.Builder
     comment := fn.Signature.Comment
+    comment = strings.ReplaceAll(comment, "$", fn.Signature.Name) // TODO properly
     if len(comment) > 0 {
         for _, line := range strings.Split(comment, "\n") {
             sb.WriteString(fmt.Sprintf("// %s\n", line))
@@ -118,21 +130,22 @@ func (fn Function) String() string {
     source := sb.String()
     out, err := formatSource(source)
     if err != nil {
-        panic(fmt.Errorf(
-            "error formatting function %q: %w",
-            source, err,
-        ))
+        return fmt.Sprintf(
+            "// error formatting function: %v\n// %s\n",
+            err,
+            strings.Join(strings.Split(source, "\n"), "\n//"),
+        )
     }
-    return string(out)
+    return out
 }
 
 // String formats the function signature as Go source code, omitting the
 // leading "func" keyword.
 func (fs FunctionSignature) String() string {
-    var sb bytes.Buffer
+    var sb strings.Builder
     if fs.Receiver.Type != "" {
-        reciever := fmt.Sprintf("(%s %s) ", fs.Receiver.Name, fs.Receiver.Type)
-        sb.WriteString(reciever)
+        receiver := fmt.Sprintf("(%s %s) ", fs.Receiver.Name, fs.Receiver.Type)
+        sb.WriteString(receiver)
     }
     sb.WriteString(fs.Name)
     if len(fs.Type) > 0 {
@@ -147,6 +160,43 @@ func (fs FunctionSignature) String() string {
         }
         sb.WriteRune(']')
     }
+    fs.writeArgs(&sb)
+    fs.writeReturns(&sb)
+    return sb.String()
+}
+
+// Value formats the function signature as Go source code as a value, without
+// the leading func keyword, and its name omitted.
+//
+// Methods are rewritten as functions with their receiver inserted at the
+// start of the function's arguments.
+//
+// Generic functions cannot be written this way.
+func (fs FunctionSignature) Value() (string, error) {
+    var sb strings.Builder
+    if len(fs.Type) > 0 {
+        return "", fmt.Errorf(
+            "cannot format function %s: cannot format a generic function as a value",
+            fs.Name,
+            // TODO capture proper error with full function signature
+        )
+    }
+    if fs.Receiver.Type != "" {
+        // move reciever to first arg
+        args := append([]Field{}, fs.Receiver)
+        if len(fs.Arguments) > 0 {
+            args = append([]Field{}, fs.Arguments...)
+        }
+        fs = fs.Copy()
+        fs.Receiver = Field{}
+        fs.Arguments = args
+    }
+    fs.writeArgs(&sb)
+    fs.writeReturns(&sb)
+    return sb.String(), nil
+}
+
+func (fs FunctionSignature) writeArgs(sb *strings.Builder) {
     sb.WriteRune('(')
     for _, arg := range fs.Arguments {
         sb.WriteString(arg.Name)
@@ -155,6 +205,9 @@ func (fs FunctionSignature) String() string {
         sb.WriteRune(',')
     }
     sb.WriteRune(')')
+}
+
+func (fs FunctionSignature) writeReturns(sb *strings.Builder) {
     if len(fs.Returns) > 0 {
         sb.WriteString(" (")
         for _, arg := range fs.Returns {
@@ -165,7 +218,6 @@ func (fs FunctionSignature) String() string {
         }
         sb.WriteRune(')')
     }
-    return sb.String()
 }
 
 // Signature returns the Go type signature of a struct as a string, including
@@ -249,7 +301,7 @@ func (s Struct) String() string {
 
 // formatStructConverterFunc formats the function body created by the
 // [Struct.Converter] method.
-func formatStructConverterFunc(returnType string, assignments []Field) string {
+func formatStructConverter(returnType string, assignments []Field) string {
     // source code representation
     var sb bytes.Buffer
     sb.WriteString("\treturn ")
@@ -272,4 +324,306 @@ func formatStructConverterFunc(returnType string, assignments []Field) string {
     }
     sb.WriteString("\t}")
     return sb.String()
+}
+
+type FunctionError struct {
+    Message string
+    Signature FunctionSignature
+    Reason error
+}
+
+func (e FunctionError) Error() string {
+    return fmt.Sprintf(
+        "Function %s error: %s: %s",
+        e.Signature.Name,
+        e.Message,
+        e.Reason,
+    )
+}
+
+var errorWrappedFunctionImplementsItself = errors.New("wrapped function implements itself")
+
+// Function returns the result of converting a wrapped function into a
+// concrete implementation representing Go source code.
+func (w WrappedFunction) Function() (Function, error) {
+    var sb strings.Builder
+    esc := func(reason error) (Function, error) {
+        return Function{}, FunctionError{
+            Message:   "cannot create function from wrapped function",
+            Signature: w.Signature.Copy(),
+            Reason:    reason,
+        }
+    }
+
+    if w.Wraps == nil {
+        // it's a function that hasn't been wrapped by anything at all
+        return esc(errorWrappedFunctionImplementsItself)
+    }
+
+    reversed := make([]*WrappedFunction, 0)
+    for current := &w; current.Wraps != nil; current = current.Wraps {
+        reversed = append(reversed, current)
+    }
+
+    for i, current := range reversed[1:] {
+        sb.WriteString("// from ")
+        sb.WriteString(current.Signature.Name)
+        sb.WriteString(fmt.Sprintf("\n\t_f%d := ", i))
+        sig, err := current.Signature.Value()
+        if err != nil { return esc(err) }
+        sb.WriteString(sig)
+        sb.WriteString(" {\n")
+        writeWrappedFunctionBody(current, &sb, "\t\t", current.Wraps.Signature.Name)
+        sb.WriteString("\t}\n\n")
+    }
+
+    writeWrappedFunctionBody(&w, &sb, "\t", w.Wraps.Signature.Name)
+
+    return Function{
+        Signature: w.Signature,
+        Body:      sb.String(),
+    }, nil
+}
+
+type captureResult struct {
+    Name string
+    Types []string
+    Value string
+}
+
+func (cr *captureResult) Capture(Type string) {
+    cr.Types = append(cr.Types, Type)
+}
+
+func tokenReplacerForArgs(referenced internal.Set[int], inputs []Field) internal.TokenReplacer {
+    return internal.TokenReplacer{
+        ByIndex: func(i int) (string, bool) {
+            if (i < 0) || (i >= len(inputs)) { return "", false }
+            arg := inputs[i]
+            referenced.Add(i)
+            return arg.Name, true
+        },
+        ByName: func(name string) (string, bool) {
+            for i, arg := range inputs {
+                if arg.Name == name {
+                    referenced.Add(i)
+                    return arg.Name, true
+                }
+            }
+            return "", false
+        },
+        TupleByIndex: func(int, int) (string, bool) { return "", false },
+        TupleByName:  func(string, int) (string, bool) { return "", false },
+    }
+}
+
+func tokenReplacerForCaptures(crprefix string, inputs []captureResult) internal.TokenReplacer {
+    return internal.TokenReplacer{
+        ByIndex: func(i int) (string, bool) {
+            if (i < 0) || (i >= len(inputs)) { return "", false }
+            arg := inputs[i]
+            return crprefix+strconv.Itoa(i), len(arg.Types) == 1
+        },
+        ByName: func(name string) (string, bool) {
+            for i, arg := range inputs {
+                if arg.Name == name {
+                    return crprefix+strconv.Itoa(i), len(arg.Types) == 1
+                }
+            }
+            return "", false
+        },
+        TupleByIndex: func(i int, j int) (string, bool) {
+            if (i < 0) || (i >= len(inputs)) { return "", false }
+            arg := inputs[i]
+            if (j < 0) || (j >= len(arg.Types)) { return "", false }
+            return crprefix+strconv.Itoa(i)+"_"+strconv.Itoa(j), len(arg.Types) == 1
+        },
+        TupleByName: func(name string, j int) (string, bool) {
+            for i, arg := range inputs {
+                if arg.Name == name {
+                    return crprefix+strconv.Itoa(i)+"_"+strconv.Itoa(j), len(arg.Types) == 1
+                }
+            }
+            return "", false
+        },
+    }
+}
+
+func (w ArgRewriter) captureArgs(inputs []Field) ([]captureResult, error) {
+    referenced := internal.NewSet[int]()
+
+    tr := tokenReplacerForArgs(referenced, inputs)
+
+    var results []captureResult
+
+    for _, capture := range w.Capture {
+        value, err := tr.Replace(capture.Value)
+        if err != nil { return nil, err } // TODO error type
+        result := captureResult{Name: capture.Name, Value: value}
+
+        types, ok := internal.SplitTypeTuple(capture.Type)
+        if !ok { return nil, fmt.Errorf("error parsing type tuple %q", types) } // TODO error type
+
+        for _, Type := range types {
+            (&result).Capture(Type)
+        }
+
+        results = append(results, result)
+    }
+
+    // check all referenced
+    for i, arg := range inputs {
+        if !referenced.Contains(i) {
+            // TODO error type
+            return nil, fmt.Errorf("argument %q not referenced", arg.Name)
+        }
+    }
+
+    return results, nil
+}
+
+// writeCaptureLHS is used to generate source code for the Left Hand Side of a
+// capture expression, which may capture zero, one, or a tuple of results from
+// the right hand side value.
+//
+// This writes `prefix` for n = 1, or `prefix_0, prefix_1, ... prefix_n` for
+// n > 1.
+func (captureResult) writeCaptureLHS(sb *strings.Builder, prefix string, i, n int) {
+    if n == 1 {
+        sb.WriteString(prefix)
+        sb.WriteString(strconv.Itoa(i))
+    } else {
+        for j := 0; j < n; j++ {
+            if j > 0 {
+                sb.WriteString(", ")
+            }
+            sb.WriteString(prefix)
+            sb.WriteString(strconv.Itoa(i))
+            sb.WriteRune('_')
+            sb.WriteString(strconv.Itoa(j))
+        }
+    }
+}
+
+// writeCaptureRHSComment is used to generate source code for the trailing
+// comment on the Right Hand Side of a capture expression, which may
+// capture zero, one, or a tuple of results from the right hand side value.
+//
+// An example comment is "// accessible as $0.N or $foo.N".
+func (cr captureResult) writeCaptureRHSComment(sb *strings.Builder, i int, n int) {
+    if n > 0 {
+        sb.WriteString(" // accessible as ")
+        sb.WriteString("$")
+        sb.WriteString(strconv.Itoa(i))
+        if n > 1 { sb.WriteString(".N") }
+        if cr.Name != "" {
+            sb.WriteString(" or $")
+            sb.WriteString(cr.Name)
+            if n > 1 { sb.WriteString(".N") }
+        }
+    }
+}
+
+func (cr captureResult) writeCapture(sb *strings.Builder, prefix string, i int) {
+    n := len(cr.Types) // no. of variables on left hand side
+    cr.writeCaptureLHS(sb, prefix, i, n)
+    if n > 0 {
+        sb.WriteString(" := ")
+    }
+    sb.WriteString(cr.Value)
+    cr.writeCaptureRHSComment(sb, i, n)
+    sb.WriteString("\n")
+}
+
+// writeWrappedFunctionBody formats the calling of a wrapped function's
+// wrapped inner function, with the name of the inner function call rewritten
+// to localInnerFuncName.
+func writeWrappedFunctionBody(
+    w *WrappedFunction,
+    sb *strings.Builder,
+    indent string,
+    localInnerFuncName string,
+) {
+    captures, err := w.Inputs.captureArgs(w.Signature.Arguments)
+    if err != nil { panic(err) } // TODO
+
+    // rewrite inputs (if any) as `_inN := ...` or
+    // `_inN_0, _inN_1, ..., _inN_M := ...` where RHS returns a tuple.
+    for i, capture := range captures {
+        capture.writeCapture(sb, "_in", i)
+    }
+    if len(captures) > 0 { sb.WriteString("\n") }
+
+    // capture outputs (if any) as `_r0, _r1 ... rN := ...`
+    returns := w.Wraps.Signature.Returns
+    sb.WriteString(indent)
+    for i := 0; i < len(returns); i++ {
+        if i > 0 { sb.WriteString(", ") }
+        sb.WriteString(fmt.Sprintf("_r%d", i))
+    }
+    if len(returns) > 0 {
+        sb.WriteString(" := ")
+    }
+
+    // call of inner function localInnerFuncName(_in0, _in1, ... _inN)
+    tr := tokenReplacerForCaptures("_in", captures)
+    sb.WriteString(fmt.Sprintf("%s(", localInnerFuncName))
+    value, err := tr.Replace(w.Inputs.Formatter)
+    if err != nil { panic(err) } // TODO
+    sb.WriteString(value)
+    sb.WriteString(")")
+
+    // named return values
+    if len(returns) > 0 {
+        sb.WriteString(fmt.Sprintf("%s// results accessible as ", indent))
+    }
+    for i, r := range returns {
+        if i > 0 { sb.WriteString(", ") }
+        sb.WriteRune('$')
+        if r.Name == "" {
+            sb.WriteString(fmt.Sprintf("_r%d", i))
+        } else {
+            sb.WriteString(r.Name)
+        }
+    }
+    if len(returns) > 0 {
+        sb.WriteRune('\n')
+    }
+    sb.WriteRune('\n')
+
+    captures, err = w.Outputs.captureArgs(w.Wraps.Signature.Returns)
+    if err != nil { panic(err) } // TODO
+
+    // rewrite outputs (if any) as `_outN := ...` or
+    // `_outN_0, _outN_1, ..., _outN_M := ...` where RHS returns a tuple.
+    for i, capture := range captures {
+        capture.writeCapture(sb, "_out", i)
+    }
+    if len(captures) > 0 { sb.WriteString("\n") }
+
+    // return values
+    tr = tokenReplacerForCaptures("_out", captures)
+    sb.WriteString(fmt.Sprintf("%sreturn", indent))
+    if len(w.Outputs.Formatter) != 0 {
+        value, err := tr.Replace(w.Outputs.Formatter)
+        if err != nil { panic(err) } // TODO
+        sb.WriteRune(' ')
+        sb.WriteString(value)
+    }
+    // TODO discard _ types
+}
+
+// String returns the result of [WrappedFunction.Format].
+//
+// In the event of error, a suitable error message is formatted as a Go comment
+// literal, instead.
+func (w WrappedFunction) String() string {
+    // TODO rewite error instead of panicking
+    return internal.Must(w.Format())
+}
+
+func (w WrappedFunction) Format() (string, error) {
+    f, err := w.Function()
+    if err != nil { return "", err }
+    return f.String(), nil
 }

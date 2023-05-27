@@ -36,6 +36,47 @@ type FunctionSignature struct {
     Receiver  Field
 }
 
+// Copy returns a (deep) copy of a FunctionSignature, ensuring that slices
+// aren't aliased.
+func (fs FunctionSignature) Copy() FunctionSignature {
+    var args, returns, types []Field
+
+    if len(fs.Type) > 0 {
+        types = append([]Field{}, fs.Type...)
+    }
+    if len(fs.Arguments) > 0 {
+        args = append([]Field{}, fs.Arguments...)
+    }
+    if len(fs.Returns) > 0 {
+        returns = append([]Field{}, fs.Returns...)
+    }
+
+    return FunctionSignature{
+        Comment:   fs.Comment,
+        Name:      fs.Name,
+        Type:      types,
+        Arguments: args,
+        Returns:   returns,
+        Receiver:  fs.Receiver,
+    }
+}
+
+// matchSimpleType returns true if a field's type is a match for the simple
+// type specified, which is a "simple" type (i.e. not a map, channel, slice,
+// etc.). All type constraints on the field are ignored, and the type is still
+// a match if the field's type is a pointer of the specified type.
+func (f Field) matchSimpleType(Type string) bool {
+    x, err := parser.ParseExpr(f.Type)
+    if err != nil {
+        return false
+    }
+    s, ok := simpleTypeExpr(x)
+    if !ok {
+        return false
+    }
+    return (s == Type) || (s == "*"+Type)
+}
+
 // matchingInput searches the function receiver and input arguments, in order,
 // for the first instance of an input matching the provided type, or a pointer
 // of the provided type. Type constraints are ignored.
@@ -47,22 +88,7 @@ func (fs FunctionSignature) matchingInput(Type string) (match Field, found bool)
     args = append(args, fs.Arguments...)
 
     args = filterFields(args, func(f Field) bool {
-        x, err := parser.ParseExpr(f.Type)
-        if err != nil {
-            return false
-        }
-        s, ok := simpleTypeExpr(x)
-        if !ok {
-            return false
-        }
-        // trim type constraints to ignore them
-        {
-            idx := strings.IndexByte(s, '[')
-            if idx > 0 {
-                s = s[0:idx]
-            }
-        }
-        return (s == Type) || (s == "*"+Type)
+        return f.matchSimpleType(Type)
     })
     if len(args) < 1 {
         return Field{}, false
@@ -75,72 +101,6 @@ func (fs FunctionSignature) matchingInput(Type string) (match Field, found bool)
 type Function struct {
     Signature FunctionSignature
     Body string
-}
-
-// FunctionWrapper represents a constructed wrapper around a user-supplied
-// inner function.
-//
-// If Inner is nil, the Current FunctionWrapper represents the original,
-// user-supplied, function to be called at the inner-most level. the Inputs
-// and Outputs are nil.
-//
-// Otherwise, the FunctionWrapper wraps another function, supplying Inputs that
-// appear as source code as arguments to that function, and rewriting its
-// result as source code using Outputs.
-//
-// For example, the function `Divide(a float64, b float64) (float64, error)`,
-// which returns an error if dividing by zero, is represented as:
-//
-//     divideSig := FunctionSignature{
-//         Name: "Divide",
-//         Arguments: []Field{
-//             {Name: "x", Type: "float64"},
-//             {Name: "y", Type: "float64"},
-//         },
-//         Returns: []Field{
-//             {Type: "float64"},
-//             {Type: "error"},
-//         },
-//     }
-//    divide := FunctionWrapper{
-//        Current: divideSig,
-//    }
-//
-// And a derived function `Halver(x float64) float64`, which returns `x / 2`,
-// might be represented as:
-//
-//     halverSig := FunctionSignature{
-//         Name: "Halver",
-//         Arguments: []Field{
-//             {Name: "x", Type: "float64"},
-//         },
-//         Returns: []Field{
-//             {Type: "float64"},
-//         },
-//     }
-//     halver := FunctionWrapper{
-//         Inner: &inner,
-//         Current: halverSig,
-//         Inputs: []string{"x", "2"},
-//         Outputs: func(results ... string) []string {
-//             // divide by 2 won't panic, so we can drop results[1]
-//             return []string{
-//                 results[0],
-//             }
-//         }
-//     }
-//
-// You won't usually have to instantiate these function signatures or wrapper
-// structs directly, as they are usually constructed for you e.g. by
-// [ParseFunctionSignature], the Parse...Function functions, the
-// [FunctionSignature.Wrap] method, or by methods on a FunctionWrapper.
-// However, it can be useful to know about the internal structure if you want
-// to create your own custom wrappers.
-type FunctionWrapper struct {
-    Inner *FunctionWrapper
-    Current FunctionSignature
-    Inputs []string
-    Outputs func(results ... string) []string
 }
 
 // Field represents a name and type, such as a field in a struct or a type
@@ -274,12 +234,21 @@ type Struct struct {
 
 // Copy returns a (deep) copy of a Struct, ensuring that slices aren't aliased.
 func (s Struct) Copy() Struct {
+    var typeParams, fields []Field
+
+    if len(s.TypeParams) > 0 {
+        typeParams = append([]Field{}, s.TypeParams...)
+    }
+    if len(s.Fields) > 0 {
+        fields = append([]Field{}, s.Fields...)
+    }
+
     ss := Struct{
         Comment:    s.Comment,
         Name:       s.Name,
         From:       s.From,
-        TypeParams: append([]Field{}, s.TypeParams...),
-        Fields:     append([]Field{}, s.Fields...),
+        TypeParams: typeParams,
+        Fields:     fields,
     }
     return ss
 }
@@ -381,7 +350,7 @@ func (s Struct) Converter(
         return postRewriteField(inputArg.Name, f)
     }, s.Fields)
 
-    body := formatStructConverterFunc(returns.Type, assignments)
+    body := formatStructConverter(returns.Type, assignments)
 
     fs.Comment = fmt.Sprintf("%s converts [%s] to [%s].", fs.Name, s.From, s.Name)
     return Function{
@@ -405,7 +374,7 @@ func rewriteSignatureString(sig string, from string, to string) string {
 }
 
 // postRewriteField performs the special '$.' replacement described by
-// FieldMapper.
+// FieldMapper when the field appears in a function as a value.
 //
 // TODO ignore "$." inside string or rune literals
 func postRewriteField(argName string, output Field) Field {
@@ -418,4 +387,193 @@ func collector(dest *[]Field) func(output Field) {
     return func(output Field) {
         *dest = append(*dest, output)
     }
+}
+
+
+// WrappedFunction represents a constructed wrapper around a user-supplied
+// inner function.
+//
+// If Inner is nil, the FunctionSignature stored at Current represents the
+// original, user-supplied, function to be called at the inner-most level. the
+// Inputs and Outputs are nil.
+//
+// Otherwise, Inner represents an inner WrappedFunction, supplying Inputs that
+// appear as source code as arguments to that function, and rewriting its
+// result as source code using Outputs. Higher-order functions are implemented
+// through a chain of Inner values.
+//
+// The Inputs field represents inputs to the inner function. This string can
+// contain an arbitrary Go expression to rewrite inputs and add or remove
+// inputs e.g. "a * 2, math.Floor(b), 13". Variables take the names from the
+// function signature argument names.
+//
+// The Outputs field represents collected outputs from a call to the inner
+// function. This string can also contain an arbitrary Go expression to rewrite
+// outputs and add or remove outputs e.g. "($0 * 2), $1 != nil". The token "$n"
+// for n = '0' to '9' is replaced with the result at that position.
+//
+// TODO: allow substitution of named return values with $name tokens.
+//
+// For example, the function `Divide(a float64, b float64) (float64, error)`,
+// which returns an error if dividing by zero, is represented as:
+//
+//     divideSig := Function{
+//         Signature: FunctionSignature{
+//             Name: "Divide",
+//             Arguments: []Field{
+//                 {Name: "x", Type: "float64"},
+//                 {Name: "y", Type: "float64"},
+//             },
+//             Returns: []Field{
+//                 {Type: "float64"},
+//                 {Type: "error"},
+//             },
+//         },
+//         Body: "...", // omitted for clarity
+//     }
+//    divide := WrappedFunction{
+//        Current: divideSig,
+//    }
+//
+// And a derived function `Halver(n float64) float64`, which returns `n / 2`,
+// might be represented as:
+//
+//     halverSig := FunctionSignature{
+//         Name: "Halver",
+//         Arguments: []Field{
+//             {Name: "n", Type: "float64"},
+//         },
+//         Returns: []Field{
+//             {Type: "float64"},
+//         },
+//     }
+//     halver := WrappedFunction{
+//         Inner: &divide,
+//         Current: halverSig,
+//         // Inputs to the inner function (in this case "Divide(x, y)")
+//         Inputs: "n, 2",
+//         // divide by 2 won't panic, so we can drop the result at index 1 and
+//         // emit only the result at index 0.
+//         Outputs: "$0",
+//     }
+//
+// You won't usually have to instantiate these function signatures or wrapper
+// structs directly, as they are usually constructed for you e.g. by
+// [ParseFunctionSignature], the Parse...Function functions, the
+// [FunctionSignature.Wrap] method, or by methods on a FunctionWrapper.
+// However, it can be useful to know about the internal structure if you want
+// to create your own custom wrappers.
+
+/*type WrappedFunction struct {
+    Inner   *WrappedFunction
+    Current Function
+    Inputs  string
+    Outputs string
+}*/
+
+type FunctionWrapper func(in WrappedFunction) (WrappedFunction, error)
+
+type WrappedFunction struct {
+    Signature FunctionSignature
+    Inputs   ArgRewriter // Rewritten inputs to wrapped function
+    Outputs  ArgRewriter // Rewritten outputs from wrapped function
+    Wraps *WrappedFunction
+}
+
+// Wrap turns a function into a wrapped function, ready for further wrapping.
+func (f Function) Wrap() WrappedFunction {
+    return WrappedFunction{
+        Signature: f.Signature,
+        Wraps:     nil,
+    }
+}
+
+// ArgRewriter either describes how an outer function rewrites its inputs
+// before passing them to a wrapped inner function, or how an outer function
+// rewrites the outputs of a wrapped inner function before returning them from
+// the outer function.
+//
+// It does this through capturing arguments into temporary variables, and
+// formatting a new list of arguments or return values.
+//
+// This is a low-level implementation for advanced use. The functions in
+// morph/funcwrappers.go provide nicer APIs for many use cases.
+//
+// A WrappedFunction uses two ArgRewriters in the following sequence, in
+// pseudocode:
+//
+//     func outerfunc(args) (returns) { // step 0, a call to outerfunc
+//         inputs... = Input ArgRewriter captured args // step 1
+//         results... = innerfunc(Input ArgWriter formats inputs) // step 2
+//         outputs = Output ArgRewriter captured results // step 3
+//         return Output ArgRewriter formats outputs // step 4
+//     }
+//
+// At each step, an ArgRewriter can retrieve the results of a previous step
+// (and only the immediately previous step) by "$" token notation, accessing a
+// named argument by "$name", and an argument by index by "$n" for some decimal
+// n. At each step, a WrappedFunction uses an ArgRewriter to transform the
+// result of the previous values.
+//
+// In step 1, the results retrieved by "$" token notation are the input
+// arguments to the outerfunc. In step 2, they are the captured arguments from
+// step 1. In step 3, they are the return values from the innerfunc call. In
+// step 4, they are the captured arguments from step 3.
+//
+// Capture is a list of Field elements which describe how to temporarily store
+// inputs to or outputs of invocations of the inner function. Only the Name,
+// Type, and Value fields on each capture are used, and each is optional.
+//
+// If a Name is given, a subsequent step can refer to the result by "$name",
+// not just by index "$n".
+//
+// The Value of the capture is a code expression of how it stores an input or
+// output. In most cases, this will be simply correspond to the value of a
+// matching input or output, unchanged. Here, inputs and named outputs can be
+// referred to using "$" token notation by name e.g. "$name", or by index e.g.
+// "$0". A value need not refer to any previous step, e.g. can be a literal
+// like "2", or some function call like "time.Now()". For a single-valued
+// result that is used only once, it may be better to do this in Formatter.
+//
+// A capture with an empty string for a Value at position i in the capture
+// slice captures the argument at position i in the previous step. Likewise,
+// a capture with an empty Type at position i in the capture slice has the
+// type of the argument at position i in the previous step.
+//
+// The capture arg's Type is a comma-separated list of types that the
+// Value produces. If the type list has more than one entry, e.g. "int,
+// error" then the captured value captures a tuple result type instead of a
+// single value. Each field in the tuple can be accessed by index by adding
+// ".N" for any decimal N to a "$" replacement token e.g. "$name.0" or "$0.3".
+//
+// All inputs and outputs must be accounted for. This can be achieved by
+// capturing a value, or part of a tuple value, to a capture field with a type
+// of "_". For a tuple value, each discarded element of the tuple must be
+// explicitly discarded, for example with a capture type specified like
+// "int, _, _".
+//
+// Formatter describes how the captured arguments or results are rewritten as the
+// input arguments to the inner function, or as the outer function's return
+// arguments.
+//
+// For example, given some function `Foo(x float64) float64`, you can imagine
+// some outer wrapping function using an ArgRewriters that converts it into
+// `func(x float64) (float64, float64) => math.Modf(Foo(x))`, with the
+// following ArgRewriter values:
+//
+//     Input: ArgRewriter{
+//         Capture: []Field{{Name: "x", Type: "float64", Value: "$x"},},
+//         Formatter: "$0",
+//     }
+//
+//     Output: ArgRewriter{
+//         Capture: []Field{
+//             {Type: "float64, float64", Value: "math.Modf($x)"},
+//         },
+//         Formatter: "$0.0, $0.1",
+//     }
+//
+type ArgRewriter struct {
+    Capture []Field
+    Formatter string
 }

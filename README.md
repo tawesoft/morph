@@ -123,22 +123,22 @@ Tutorials
 ### Structs
 
 * Mapping between Go structs with morph.
-* FieldMapper vs StructMapper
+* FieldMapper vs StructMapper.
 * Deep copy and deep equals without runtime reflection.
 * Automatically generate custom XML or JSON struct tags.
 * Automatically generate nullable SQL field types for Go structs.
-* Automatically reverse a mapping.
-* Morphing structs with `go generate`.
+* Automatically generate a reverse mapping.
 
 ### Functions
 
-* Transforming Go functions with morph
-  * Binding function arguments.
-  * Partial function application.
-  * Promises.
-  * Methods.
-  * Return values.
-* Morphing functions with `go generate`.
+* Wrapping and transforming Go functions with morph.
+* Creating custom function wrappers.
+* Wrapping and transforming higher-order functions.
+
+### General
+
+* `$` token substitution in morph.
+* Using morph with `go generate`.
 
 
 Security Model
