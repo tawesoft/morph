@@ -16,17 +16,20 @@ type TokenReplacer struct {
 }
 
 func (t TokenReplacer) Replace(in string) (string, error) {
+    esc := func(err error) (string, error) {
+        return "", fmt.Errorf("token replacement failure in string %q: %w", in, err)
+    }
     var out strings.Builder
     for i := 0; i < len(in); i++ { // bytewise is fine
         c := in[i]
         if (c == '\'') || (c == '"') || (c == '`') {
             l, err := t.consumeStringLiteral(c, in[i:])
-            if err != nil { return "", err }
+            if err != nil { return esc(err) }
             out.WriteString(in[i:i+l])
             i += l
         } else if c == '$' {
             value, l, err := t.consumeIdent(in[i:])
-            if err != nil { return "", err }
+            if err != nil { return esc(err) }
             out.WriteString(value)
             i += l
         } else {
@@ -40,7 +43,7 @@ func (t TokenReplacer) Replace(in string) (string, error) {
 // TokenReplacer functions on the identifier.
 func (t TokenReplacer) consumeIdent(in string) (string, int, error) {
     var err error
-    if len(in) < 0 {
+    if (len(in) < 0) || (in[0] != '$') {
         return "", 0, fmt.Errorf("expected identifier start")
     }
     in = in[1:]

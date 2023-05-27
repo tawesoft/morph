@@ -156,19 +156,139 @@ func TestWrappedFunction_String(t *testing.T) {
     }
 `,
     }.Wrap()
+    simpleOneInput := morph.Function{
+        Signature: morph.FunctionSignature{
+            Name: "SimpleOneInput",
+            Arguments: []morph.Field{
+                {Name: "x", Type: "float64"},
+            },
+        },
+        Body: "x = x",
+    }.Wrap()
+    foo := morph.Function{
+        Signature: morph.FunctionSignature{
+            Name:      "Foo",
+            Arguments: []morph.Field{
+                {Name: "foo", Type: "float64"},
+            },
+            Returns:   []morph.Field{
+                {Type: "float64"},
+            },
+        },
+        Body: `
+        return 2 * foo
+`,
+    }.Wrap()
+    divide2 := morph.WrappedFunction{
+        Signature: morph.FunctionSignature{
+            Comment:   "$ returns the result of [Divide] with the result rewritten as (value, err == nil).",
+            Name:      "Divide_ReturnValueOk",
+            Arguments: []morph.Field{
+                {Name: "a", Type: "float64"},
+                {Name: "b", Type: "float64"},
+            },
+            Returns:   []morph.Field{
+                {Type: "float64"},
+                {Type: "bool"},
+            },
+        },
+        Inputs: morph.ArgRewriter{
+            Capture: []morph.Field{
+                {Name: "i", Type: "float64", Value: "$a",},
+                {Name: "j", Type: "float64", Value: "$b",},
+            },
+            Formatter: "$i, $j",
+        },
+        Outputs: morph.ArgRewriter{
+            Capture: []morph.Field{
+                {Name: "f",  Type: "float64", Value: "$value"},
+                {Name: "ok", Type: "bool",    Value: "$err == nil"},
+            },
+            Formatter: "$f, $ok",
+        },
+        Wraps: &divide,
+    }
 
     tests := []struct{
         wrapped morph.WrappedFunction
         expected string
+        fails bool
     }{
         {
             wrapped: morph.WrappedFunction{
                 Signature: morph.FunctionSignature{
-                    Comment:   "$ returns the result of [Divide] with the result rewritten as (value, err == nil).",
-                    Name:      "Divide_ReturnValueOk",
+                    Name:      "SimpleConstArg",
+                },
+                Inputs: morph.ArgRewriter{
+                    Formatter: "2",
+                },
+                Wraps: &simpleOneInput,
+            },
+            expected: `
+func SimpleConstArg() {
+    SimpleOneInput(2)
+
+    return
+}
+`,
+        },
+        {
+            wrapped: morph.WrappedFunction{
+                Signature: morph.FunctionSignature{
+                    Name:      "FailsInputNotReferenced",
                     Arguments: []morph.Field{
                         {Name: "a", Type: "float64"},
-                        {Name: "b", Type: "float64"},
+                    },
+                },
+                Inputs: morph.ArgRewriter{
+                    Formatter: "2",
+                },
+                Wraps: &simpleOneInput,
+            },
+            fails: true,
+        },
+        {
+            wrapped: morph.WrappedFunction{
+                Signature: morph.FunctionSignature{
+                    Name:      "FailsByIndex",
+                    Arguments: []morph.Field{
+                        {Name: "a", Type: "float64"},
+                    },
+                },
+                Inputs: morph.ArgRewriter{
+                    Capture:   []morph.Field{
+                        {Name: "", Type: "float64", Value: "$1",},
+                    },
+                    Formatter: "$0",
+                },
+                Wraps: &simpleOneInput,
+            },
+            fails: true,
+        },
+        {
+            wrapped: divide2,
+            expected: `
+// Divide_ReturnValueOk returns the result of [Divide] with the result rewritten as (value, err == nil).
+func Divide_ReturnValueOk(a float64, b float64) (float64, bool) {
+    _in0 := a // accessible as $0 or $i
+    _in1 := b // accessible as $1 or $j
+
+    _r0, _r1 := Divide(_in0, _in1) // results accessible as $value, $err
+
+    _out0 := _r0        // accessible as $0 or $f
+    _out1 := _r1 == nil // accessible as $1 or $ok
+
+    return _out0, _out1
+}
+`,
+        },
+        {
+            wrapped: morph.WrappedFunction{
+                Signature: morph.FunctionSignature{
+                    Comment:   "$ returns the result of Divide(a, 2) as (float64, bool) by wrapping Divide_ReturnValueOk.",
+                    Name:      "Divide_Const_ReturnValueOk",
+                    Arguments: []morph.Field{
+                        {Name: "a", Type: "float64"},
                     },
                     Returns:   []morph.Field{
                         {Type: "float64"},
@@ -177,32 +297,83 @@ func TestWrappedFunction_String(t *testing.T) {
                 },
                 Inputs: morph.ArgRewriter{
                     Capture: []morph.Field{
-                        {Name: "a", Type: "float64", Value: "$a",},
-                        {Name: "b", Type: "float64", Value: "$b",},
+                        {Type: "float64", Value: "$0"},
                     },
-                    Formatter: "$a, $b",
+                    Formatter: "$0, 2",
                 },
                 Outputs: morph.ArgRewriter{
                     Capture: []morph.Field{
-                        {Name: "f",  Type: "float64", Value: "$value"},
-                        {Name: "ok", Type: "bool",    Value: "$err == nil"},
+                        {Type: "float64", Value: "$0"},
+                        {Type: "bool",    Value: "$1"},
                     },
-                    Formatter: "$f, $ok",
+                    Formatter: "$0, $1",
                 },
-                Wraps: &divide,
+                Wraps: &divide2,
             },
             expected: `
-// Divide_ReturnValueOk returns the result of [Divide] with the result rewritten as (value, err == nil).
-func Divide_ReturnValueOk(a float64, b float64) (float64, bool) {
-    _in0 := a // accessible as $0 or $a
-    _in1 := b // accessible as $1 or $b
+// Divide_Const_ReturnValueOk returns the result of Divide(a, 2) as (float64, bool) by wrapping Divide_ReturnValueOk.
+func Divide_Const_ReturnValueOk(a float64) (float64, bool) {
+    // from Divide_ReturnValueOk
+    _f0 := func(a float64, b float64) (float64, bool) {
+    _in0 := a // accessible as $0 or $i
+    _in1 := b // accessible as $1 or $j
 
-    _r0, _r1 := Divide(_in0, _in1) // results accessible as $value, $err
+        _r0, _r1 := Divide(_in0, _in1) // results accessible as $value, $err
 
-    _out0 := value      // accessible as $0 or $f
-    _out1 := err == nil // accessible as $1 or $ok
+        _out0 := _r0        // accessible as $0 or $f
+        _out1 := _r1 == nil // accessible as $1 or $ok
+
+        return _out0, _out1
+    }
+
+    _in0 := a // accessible as $0
+
+    _r0, _r1 := _f0(_in0, 2) // results accessible as $0, $1
+
+    _out0 := _r0 // accessible as $0
+    _out1 := _r1 // accessible as $1
 
     return _out0, _out1
+}
+`,
+        },
+        {
+            wrapped: morph.WrappedFunction{
+                Signature: morph.FunctionSignature{
+                    Comment:   "$ returns the result of math.Modf(Foo(x)).",
+                    Name:      "Foo_Modf",
+                    Arguments: []morph.Field{
+                        {Name: "x", Type: "float64"},
+                    },
+                    Returns:   []morph.Field{
+                        {Type: "float64"},
+                        {Type: "float64"},
+                    },
+                },
+                Inputs: morph.ArgRewriter{
+                    Capture: []morph.Field{
+                        {Type: "float64", Value: "$0"},
+                    },
+                    Formatter: "$0",
+                },
+                Outputs: morph.ArgRewriter{
+                    Capture: []morph.Field{
+                        {Type: "float64, float64", Value: "math.Modf($0)"},
+                    },
+                    Formatter: "$0.0, $0.1",
+                },
+                Wraps: &foo,
+            },
+            expected: `
+// Foo_Modf returns the result of math.Modf(Foo(x)).
+func Foo_Modf(x float64) (float64, float64) {
+    _in0 := x // accessible as $0
+
+    _r0 := Foo(_in0) // results accessible as $0
+
+    _out0_0, _out0_1 := math.Modf(_r0) // accessible as $0.N
+
+    return _out0_0, _out0_1
 }
 `,
         },
@@ -211,14 +382,19 @@ func Divide_ReturnValueOk(a float64, b float64) (float64, bool) {
     for _, tt := range tests {
         t.Run(tt.wrapped.Signature.Name, func(t *testing.T) {
             result, err := tt.wrapped.Format()
-            if err != nil {
-                t.Errorf("error formatting wrapped function: %s", err)
+            if tt.fails != (err != nil) {
+                if tt.fails == false {
+                    t.Errorf("error formatting wrapped function: %v", err)
+                } else {
+                    t.Errorf("wrapped function successfully, but expected to fail")
+                }
+                return
             }
 
             expected := internal.FormatSource(tt.expected)
             if result != expected {
-                t.Logf("got %+v", result)
-                t.Logf("expected %+v", expected)
+                t.Logf("got:\n%+v", result)
+                t.Logf("expected:\n%+v", expected)
                 t.Errorf("wrapped function does not format as expected")
             }
         })

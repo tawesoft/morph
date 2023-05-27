@@ -334,7 +334,7 @@ type FunctionError struct {
 
 func (e FunctionError) Error() string {
     return fmt.Sprintf(
-        "Function %s error: %s: %s",
+        "Function %s: error: %s: %s",
         e.Signature.Name,
         e.Message,
         e.Reason,
@@ -356,7 +356,6 @@ func (w WrappedFunction) Function() (Function, error) {
     }
 
     if w.Wraps == nil {
-        // it's a function that hasn't been wrapped by anything at all
         return esc(errorWrappedFunctionImplementsItself)
     }
 
@@ -368,16 +367,30 @@ func (w WrappedFunction) Function() (Function, error) {
     for i, current := range reversed[1:] {
         sb.WriteString("// from ")
         sb.WriteString(current.Signature.Name)
-        sb.WriteString(fmt.Sprintf("\n\t_f%d := ", i))
+        sb.WriteString(fmt.Sprintf("\n\t_f%d := func ", i))
         sig, err := current.Signature.Value()
         if err != nil { return esc(err) }
         sb.WriteString(sig)
         sb.WriteString(" {\n")
-        writeWrappedFunctionBody(current, &sb, "\t\t", current.Wraps.Signature.Name)
+        if i == 0 {
+            writeWrappedFunctionBody(current, &sb, "\t\t", current.Wraps.Signature.Name)
+        } else {
+            writeWrappedFunctionBody(current, &sb, "\t\t", fmt.Sprintf("_f%d", i-1))
+        }
         sb.WriteString("\t}\n\n")
     }
 
-    writeWrappedFunctionBody(&w, &sb, "\t", w.Wraps.Signature.Name)
+    var name string
+    if len(reversed) > 1 {
+        name = "_f0"
+    } else {
+        name = w.Wraps.Signature.Name
+    }
+
+    err := writeWrappedFunctionBody(&w, &sb, "\t", name)
+    if err != nil {
+        return esc(fmt.Errorf("error generating function body: %w", err))
+    }
 
     return Function{
         Signature: w.Signature,
@@ -436,12 +449,12 @@ func tokenReplacerForCaptures(crprefix string, inputs []captureResult) internal.
             if (i < 0) || (i >= len(inputs)) { return "", false }
             arg := inputs[i]
             if (j < 0) || (j >= len(arg.Types)) { return "", false }
-            return crprefix+strconv.Itoa(i)+"_"+strconv.Itoa(j), len(arg.Types) == 1
+            return crprefix+strconv.Itoa(i)+"_"+strconv.Itoa(j), len(arg.Types) > 1
         },
         TupleByName: func(name string, j int) (string, bool) {
             for i, arg := range inputs {
                 if arg.Name == name {
-                    return crprefix+strconv.Itoa(i)+"_"+strconv.Itoa(j), len(arg.Types) == 1
+                    return crprefix+strconv.Itoa(i)+"_"+strconv.Itoa(j), len(arg.Types) > 1
                 }
             }
             return "", false
@@ -449,16 +462,14 @@ func tokenReplacerForCaptures(crprefix string, inputs []captureResult) internal.
     }
 }
 
-func (w ArgRewriter) captureArgs(inputs []Field) ([]captureResult, error) {
-    referenced := internal.NewSet[int]()
-
-    tr := tokenReplacerForArgs(referenced, inputs)
-
+func (w ArgRewriter) capture(tr internal.TokenReplacer) ([]captureResult, error) {
     var results []captureResult
 
     for _, capture := range w.Capture {
         value, err := tr.Replace(capture.Value)
-        if err != nil { return nil, err } // TODO error type
+        if err != nil {
+            return nil, fmt.Errorf("error replacing capture argument token: %w", err)
+        }
         result := captureResult{Name: capture.Name, Value: value}
 
         types, ok := internal.SplitTypeTuple(capture.Type)
@@ -469,14 +480,6 @@ func (w ArgRewriter) captureArgs(inputs []Field) ([]captureResult, error) {
         }
 
         results = append(results, result)
-    }
-
-    // check all referenced
-    for i, arg := range inputs {
-        if !referenced.Contains(i) {
-            // TODO error type
-            return nil, fmt.Errorf("argument %q not referenced", arg.Name)
-        }
     }
 
     return results, nil
@@ -535,6 +538,16 @@ func (cr captureResult) writeCapture(sb *strings.Builder, prefix string, i int) 
     sb.WriteString("\n")
 }
 
+func captureArgs(args []Field) []captureResult {
+    var results []captureResult
+    for _, arg := range args {
+        result := captureResult{Name: arg.Name}
+        (&result).Capture(arg.Type)
+        results = append(results, result)
+    }
+    return results
+}
+
 // writeWrappedFunctionBody formats the calling of a wrapped function's
 // wrapped inner function, with the name of the inner function call rewritten
 // to localInnerFuncName.
@@ -543,19 +556,29 @@ func writeWrappedFunctionBody(
     sb *strings.Builder,
     indent string,
     localInnerFuncName string,
-) {
-    captures, err := w.Inputs.captureArgs(w.Signature.Arguments)
-    if err != nil { panic(err) } // TODO
+) error {
+    referenced := internal.NewSet[int]()
+    tr := tokenReplacerForArgs(referenced, w.Signature.Arguments)
+    inputs, err := w.Inputs.capture(tr)
+    if err != nil {
+        return fmt.Errorf("error formatting captures for input arguments: %w", err)
+    }
+    for i, arg := range w.Signature.Arguments {
+        if !referenced.Contains(i) {
+            return fmt.Errorf("input argument %q not referenced", arg.Name)
+        }
+    }
 
     // rewrite inputs (if any) as `_inN := ...` or
     // `_inN_0, _inN_1, ..., _inN_M := ...` where RHS returns a tuple.
-    for i, capture := range captures {
+    for i, capture := range inputs {
         capture.writeCapture(sb, "_in", i)
     }
-    if len(captures) > 0 { sb.WriteString("\n") }
+    if len(inputs) > 0 { sb.WriteString("\n") }
 
     // capture outputs (if any) as `_r0, _r1 ... rN := ...`
     returns := w.Wraps.Signature.Returns
+    capturedReturns := captureArgs(w.Wraps.Signature.Returns)
     sb.WriteString(indent)
     for i := 0; i < len(returns); i++ {
         if i > 0 { sb.WriteString(", ") }
@@ -566,10 +589,13 @@ func writeWrappedFunctionBody(
     }
 
     // call of inner function localInnerFuncName(_in0, _in1, ... _inN)
-    tr := tokenReplacerForCaptures("_in", captures)
+    tr = tokenReplacerForCaptures("_in", inputs)
     sb.WriteString(fmt.Sprintf("%s(", localInnerFuncName))
     value, err := tr.Replace(w.Inputs.Formatter)
-    if err != nil { panic(err) } // TODO
+    if err != nil {
+        return fmt.Errorf("error formatting captures for local function call %w", err)
+    }
+
     sb.WriteString(value)
     sb.WriteString(")")
 
@@ -581,7 +607,7 @@ func writeWrappedFunctionBody(
         if i > 0 { sb.WriteString(", ") }
         sb.WriteRune('$')
         if r.Name == "" {
-            sb.WriteString(fmt.Sprintf("_r%d", i))
+            sb.WriteString(strconv.Itoa(i))
         } else {
             sb.WriteString(r.Name)
         }
@@ -591,26 +617,32 @@ func writeWrappedFunctionBody(
     }
     sb.WriteRune('\n')
 
-    captures, err = w.Outputs.captureArgs(w.Wraps.Signature.Returns)
-    if err != nil { panic(err) } // TODO
+    tr = tokenReplacerForCaptures("_r", capturedReturns)
+    outputs, err := w.Outputs.capture(tr)
+    if err != nil {
+        return fmt.Errorf("error formatting captures for outputs from %+v: %w", returns, err)
+    }
 
     // rewrite outputs (if any) as `_outN := ...` or
     // `_outN_0, _outN_1, ..., _outN_M := ...` where RHS returns a tuple.
-    for i, capture := range captures {
+    for i, capture := range outputs {
         capture.writeCapture(sb, "_out", i)
     }
-    if len(captures) > 0 { sb.WriteString("\n") }
+    sb.WriteString("\n")
 
     // return values
-    tr = tokenReplacerForCaptures("_out", captures)
     sb.WriteString(fmt.Sprintf("%sreturn", indent))
     if len(w.Outputs.Formatter) != 0 {
-        value, err := tr.Replace(w.Outputs.Formatter)
-        if err != nil { panic(err) } // TODO
+        tr = tokenReplacerForCaptures("_out", outputs)
+        value, err = tr.Replace(w.Outputs.Formatter)
+        if err != nil {
+            return fmt.Errorf("error formatting captures for return: %w", err)
+        }
         sb.WriteRune(' ')
         sb.WriteString(value)
     }
     // TODO discard _ types
+    return nil
 }
 
 // String returns the result of [WrappedFunction.Format].
