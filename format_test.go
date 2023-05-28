@@ -57,6 +57,111 @@ type Name[X any] struct {
     }
 }
 
+func TestFunctionSignature_Bind(t *testing.T) {
+    divide := morph.Function{
+        Signature: morph.FunctionSignature{
+            Name:      "Divide",
+            Comment:   "Divide returns a divided by b. It is an error to divide by zero.",
+            Arguments: []morph.Field{
+                {Name: "a", Type: "float64"},
+                {Name: "b", Type: "float64"},
+            },
+            Returns:   []morph.Field{
+                {Name: "value", Type: "float64"},
+                {Name: "err",   Type: "error"},
+            },
+        },
+        Body: `
+    if b == 0.0 {
+        return 0, DivideByZeroError
+    } else {
+        return a / b, nil
+    }
+`,
+    }
+
+    tests := []struct{
+        Name string
+        Input interface{Bind(string, []morph.Field) (morph.Function, error)}
+        Args []morph.Field
+        Expected string
+        Fails bool
+    }{
+        {
+            Name: "Divide0",
+            Input: divide.Signature,
+            Args: []morph.Field{
+            },
+            Expected: `
+func Divide0() func(a float64, b float64) (value float64, err error) {
+    return func(a float64, b float64) (value float64, err error) {
+        return Divide(a, b)
+    }
+}
+`,
+        },
+        {
+            Name: "Divider",
+            Input: divide.Signature,
+            Args: []morph.Field{
+                {Name: "b"},
+            },
+            Expected: `
+// Divider returns a function that implements [Divide]
+// with the argument b already applied.
+func Divider(b float64) func(a float64) (value float64, err error) {
+    return func(a float64) (value float64, err error) {
+        return Divide(a, b)
+    }
+}
+`,
+        },
+        {
+            Name: "DividerFull",
+            Input: divide,
+            Args: []morph.Field{
+                {Name: "b"},
+            },
+            Expected: `
+// DividerFull returns a function that implements [Divide]
+// with the argument b already applied.
+func DividerFull(b float64) func(a float64) (value float64, err error) {
+    return func(a float64) (value float64, err error) {
+        return func(a float64, b float64) (value float64, err error) {
+            if b == 0.0 {
+                return 0, DivideByZeroError
+            } else {
+                return a / b, nil
+            }
+        }(a, b)
+    }
+}
+`,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.Name, func(t *testing.T) {
+            result, err := tt.Input.Bind(tt.Name, tt.Args)
+            if tt.Fails != (err != nil) {
+                if tt.Fails == false {
+                    t.Errorf("error binding function: %v", err)
+                } else {
+                    t.Errorf("bound function successfully, but expected to fail")
+                }
+                return
+            }
+
+            expected := internal.FormatSource(tt.Expected)
+            if result.String() != expected {
+                t.Logf("got:\n%+v", result.String())
+                t.Logf("expected:\n%+v", expected)
+                t.Errorf("bound function does not format as expected")
+            }
+        })
+    }
+}
+
 func TestFunction_String(t *testing.T) {
     tests := []struct{
         Input morph.Function
@@ -119,6 +224,25 @@ func Foo[X any, Y interface{}, Z interface{~[]Y}](i maybe.M[X], j either.E[Y, Z]
             Expected: internal.FormatSource(`
 // Bar is a method on a Foo
 func (f *Foo[X]) Bar() {
+    panic("not implemented")
+}`),
+        },
+        { // test 2
+            Input: morph.Function{
+                Signature: morph.FunctionSignature{
+                    Comment:   "Foo is a higher-order function",
+                    Name:      "Foo",
+                    Returns:   []morph.Field{
+                        {
+                            Type: "func(string) (float64, error)",
+                        },
+                    },
+                },
+                Body: `panic("not implemented")`,
+            },
+            Expected: internal.FormatSource(`
+// Foo is a higher-order function
+func Foo() func(string) (float64, error) {
     panic("not implemented")
 }`),
         },

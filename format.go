@@ -659,3 +659,102 @@ func (w WrappedFunction) Format() (string, error) {
     if err != nil { return "", err }
     return f.String(), nil
 }
+
+// bind implements [FunctionSignature.Bind] and [Function.Bind].
+func bind(fs FunctionSignature, name string, xargs []Field, inline *Function) (Function, error) {
+    // Note, implementation is suboptimal (n^2) but shouldn't matter for
+    // small number of args.
+
+    /*
+    esc := func(err error) (Function, error) { // TODO proper error type
+        return Function{}, fmt.Errorf("FunctionSignature.Bind error: %w", err)
+    }
+    */
+
+    match := func(f Field, name string, Type string) bool {
+        if (f.Name != name) { return false }
+        if (Type != "") && (f.Type != Type) { return false }
+        return true
+    }
+    matchAny := func(f Field) bool {
+        for _, arg := range xargs {
+            if match(f, arg.Name, arg.Type) { return true }
+        }
+        return false
+    }
+
+    inner := fs.Copy()
+    outer := fs.Copy()
+    outer.Name = name
+    outer.Comment = ""
+
+    if len(xargs) > 0 {
+        var cb strings.Builder
+        cb.WriteString("$ returns a function that implements [")
+        cb.WriteString(fs.Name)
+        cb.WriteString("]\nwith the argument")
+        if len(xargs) > 1 { cb.WriteString("s") }
+        cb.WriteString(" ")
+        for i, arg := range xargs {
+            if i > 0 {
+                if i == len(xargs) - 1 {
+                    cb.WriteString(" and ")
+                } else {
+                    cb.WriteString(", ")
+                }
+            }
+            cb.WriteString(arg.Name)
+        }
+        cb.WriteString(" already applied.")
+        outer.Comment = cb.String()
+    }
+
+    inner.Arguments = filterFields(inner.Arguments, func(f Field) bool {
+        return !matchAny(f)
+    })
+    outer.Arguments = filterFields(outer.Arguments, func(f Field) bool {
+        return matchAny(f)
+    })
+
+    outer.Returns = []Field{{
+        Type: "func" + internal.Must(inner.Value()),
+    }}
+
+    var sb strings.Builder
+    sb.WriteString("\treturn func")
+    sb.WriteString(internal.Must(inner.Value()))
+    sb.WriteString(" {\n")
+    sb.WriteString("\t\treturn ")
+
+    if inline == nil {
+        sb.WriteString(fs.Name)
+    } else {
+        sb.WriteString("func ")
+        sb.WriteString(internal.Must(inline.Signature.Value()))
+        sb.WriteString(" {")
+        sb.WriteString(inline.Body)
+        sb.WriteString("}")
+    }
+
+    sb.WriteString("(")
+    for _, arg := range fs.Arguments {
+        found := false
+        for _, specArg := range xargs {
+            if match(arg, specArg.Name, specArg.Type) {
+                sb.WriteString(specArg.Name)
+                found = true
+                break
+            }
+        }
+        if !found {
+            sb.WriteString(arg.Name)
+        }
+        sb.WriteString(", ")
+    }
+    sb.WriteString(")\t}")
+
+    return Function{
+        Signature: outer,
+        Body:      sb.String(),
+    }, nil
+}

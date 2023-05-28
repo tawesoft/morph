@@ -226,7 +226,7 @@ func fieldsOne(fs *ast.FieldList) Field {
 // A field with a type but no name is treated as a struct's embedded type with
 // its name inherited from the type name.
 func fields(fieldList *ast.FieldList) []Field {
-    return _fields(fieldList, true)
+    return astFieldListToFields(fieldList, true)
 }
 
 // funcfields converts an ast.FieldList into []Field. Returns nil for a nil
@@ -234,10 +234,10 @@ func fields(fieldList *ast.FieldList) []Field {
 //
 // Unlike the fields function, a field with a type but no name is permitted.
 func funcfields(fieldList *ast.FieldList) []Field {
-    return _fields(fieldList, false)
+    return astFieldListToFields(fieldList, false)
 }
 
-func _fields(fieldList *ast.FieldList, allowEmbedded bool) []Field {
+func astFieldListToFields(fieldList *ast.FieldList, allowEmbedded bool) []Field {
     if fieldList == nil {
         return nil
     }

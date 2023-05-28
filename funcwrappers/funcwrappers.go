@@ -16,6 +16,15 @@ func (err FieldNotFound) Error() string {
     return fmt.Sprintf("field %q not found", err.Name)
 }
 
+// Compose constructs a new [morph.FunctionWrapper] that applies each wrapper
+// in order. The result is a single function wrapper that gives the same result
+// as calling a [morph.WrappedFunction.Apply] method with multiple wrappers.
+func Compose(wrappers ... morph.FunctionWrapper) morph.FunctionWrapper {
+    return func (f morph.WrappedFunction) (morph.WrappedFunction, error) {
+        return f.Wrap(wrappers...)
+    }
+}
+
 // SetArg returns a function that constructs a [morph.FunctionWrapper] for the
 // provided Function that...
 //

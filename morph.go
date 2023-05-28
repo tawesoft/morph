@@ -389,7 +389,6 @@ func collector(dest *[]Field) func(output Field) {
     }
 }
 
-
 // WrappedFunction represents a constructed wrapper around a user-supplied
 // inner function.
 //
@@ -488,6 +487,26 @@ func (f Function) Wrap() WrappedFunction {
     }
 }
 
+// Wrap applies function wrappers to a given wrapped function.
+//
+// The earliest wrappers in the list are the first to be applied.
+//
+// For example, analogous to function composition,
+// `x.Wrap(f, g)` applies `g(f(x))`.
+//
+// Returns the first error encountered.
+func (f WrappedFunction) Wrap(wrappers ... FunctionWrapper) (WrappedFunction, error) {
+    current := f
+    var err error
+
+    for _, wrapper := range wrappers {
+        current, err = wrapper(current)
+        if err != nil { return WrappedFunction{}, err }
+    }
+
+    return current, nil
+}
+
 // ArgRewriter either describes how an outer function rewrites its inputs
 // before passing them to a wrapped inner function, or how an outer function
 // rewrites the outputs of a wrapped inner function before returning them from
@@ -576,4 +595,33 @@ func (f Function) Wrap() WrappedFunction {
 type ArgRewriter struct {
     Capture []Field
     Formatter string
+}
+
+// Bind constructs a new higher-order function that returns the result of
+// the input function with the specified args automatically bound to arguments
+// on the input.
+//
+// Each arg's Name must match a name on the input FunctionSignature. Each Type,
+// if specified, must match the Type of that arg on the input FunctionSignature
+// with a matching name.
+//
+// The name argument sets the name of the created function.
+func (fs FunctionSignature) Bind(name string, xargs []Field) (Function, error) {
+    return bind(fs, name, xargs, nil)
+}
+
+// Bind constructs a new higher-order function that returns the result of
+// the input function with the specified args automatically bound to arguments
+// on the input.
+//
+// Each arg's Name must match a name on the input FunctionSignature. Each Type,
+// if specified, must match the Type of that arg on the input FunctionSignature
+// with a matching name.
+//
+// The name argument sets the name of the created function.
+//
+// The function is inlined in the new function. To avoid this, use
+// [FunctionSignature.Bind] instead.
+func (f Function) Bind(name string, xargs []Field) (Function, error) {
+    return bind(f.Signature, name, xargs, &f)
 }
