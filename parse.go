@@ -21,7 +21,7 @@ import (
 // only used when recording position information. The type of the argument for
 // the src parameter must be string, []byte, or io.Reader. If src == nil,
 // instead parses the file specified by filename. This matches the behavior of
-// [go.Parser/ParseFile].
+// [go/parser.ParseFile].
 //
 // Parsing is performed without full object resolution. This means parsing will
 // still succeed even on some files that may not actually compile.

@@ -132,8 +132,11 @@ type Field struct {
     Value    string
     Tag      string
     Comment  string
-    Comparer string
     Reverse  FieldMapper
+
+    Comparer string // equality
+    Orderer string  // less than
+    Copier string   // assignment
 }
 
 // AppendTags returns a new Field with the given tags appended to the field's

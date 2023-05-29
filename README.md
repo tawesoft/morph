@@ -122,8 +122,7 @@ Tutorials
 
 ### Structs
 
-* Mapping between Go structs with morph.
-* FieldMapper vs StructMapper.
+* [Apples To Oranges: mapping between Go structs with Morph.]
 * Deep copy and deep equals without runtime reflection.
 * Automatically generate custom XML or JSON struct tags.
 * Automatically generate nullable SQL field types for Go structs.
@@ -147,3 +146,6 @@ Security Model
 WARNING: It is assumed that all inputs are trusted. DO NOT accept arbitrary
 input from untrusted sources under any circumstances, as this will parse
 and generate arbitrary code.
+
+
+[Apples To Oranges: mapping between Go structs with Morph.]: doc/mapping-go-structs-with-morph.md

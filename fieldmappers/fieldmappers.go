@@ -104,8 +104,8 @@ func TimeToInt64(input morph.Field, emit func(output morph.Field)) {
 }
 
 // Reverse is a [morph.FieldMapper] that maps a mapped struct back to its
-// original, to the extent that this is possible, by examining the generated
-// "morph-reverse" tags on a generated field.
+// original, to the extent that this is possible, by applying the reverse
+// FieldMapper on each field.
 func Reverse(input morph.Field, emit func(output morph.Field)) {
     if input.Reverse != nil {
         input.Reverse(input, emit)
