@@ -97,8 +97,6 @@ func OrangeToApple(from Orange) Apple {
 
 ### Wrapping a function in different ways
 
-***TODO*** *This bit isn't fully implemented yet, but it will be soon!*
-
 Let's take the source code for an example function, Divide:
 
 ```go

@@ -202,23 +202,40 @@ func (f Field) Rewrite(input Field) Field {
 // field `DoubleBar` with a value `2 * input.Bar`.
 type FieldMapper func(input Field, emit func(output Field))
 
-// StructMapper returns a new StructMapper that applies the given
-// FieldMapper to every field on the input struct.
+// StructMapper returns a new StructMapper that applies the given FieldMapper
+// to every field on the input struct.
+//
+// If the FieldMapper is reversible, then so is the returned StructMapper.
 func (mapper FieldMapper) StructMapper() StructMapper {
     if mapper == nil { return nil }
     return func(in Struct) Struct {
         var results []Field
+        out := in.Copy()
 
         emit := collector(&results)
-        for _, input := range in.Fields {
+        for _, input := range out.Fields {
             emit2 := func(output Field) {
                 emit(output.Rewrite(input))
             }
             mapper(input, emit2)
         }
 
-        in.Fields = results
-        return in
+        out.Fields = results
+        oldReverse := out.Reverse
+        out.Reverse = func(in2 Struct) Struct {
+            out2 := in2.MapFields(func (input2 Field, emit2 func(output Field)) {
+                if input2.Reverse != nil {
+                    input2.Reverse(input2, emit2)
+                } else {
+                    emit2(input2)
+                }
+            })
+            if oldReverse != nil {
+                out2 = oldReverse(out2.Copy())
+            }
+            return out2
+        }
+        return out
     }
 }
 
@@ -233,6 +250,7 @@ type Struct struct {
     From       string
     TypeParams []Field
     Fields     []Field
+    Reverse StructMapper
 }
 
 // Copy returns a (deep) copy of a Struct, ensuring that slices aren't aliased.
@@ -252,6 +270,7 @@ func (s Struct) Copy() Struct {
         From:       s.From,
         TypeParams: typeParams,
         Fields:     fields,
+        Reverse:    s.Reverse,
     }
     return ss
 }
