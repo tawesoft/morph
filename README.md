@@ -9,7 +9,15 @@ Morph is a small Go code generator that makes it easy to map between
 Go structs, automatically derive new Go structs, and transform functions in 
 different ways.
 
-Features:
+
+**Why use Morph?**
+
+* Reduce time spent maintaining boilerplate.
+* Fewer opportunities for bugs in boilerplate caused by typos.
+* Life is too short to maintain boilerplate manually.
+
+
+**Features**
 
  - fully programmable (in native Go).
 
@@ -27,7 +35,13 @@ Features:
    * [functionwrappers] for functions
 
 
-**Status:** *implementation almost complete* 
+**Status**
+
+* Morph core is feature complete ✓
+* Documentation is in progress ⬅
+* Needs more features in subpackages
+* Morph core needs tidying and better error handling
+
 
 Quick Examples
 --------------
