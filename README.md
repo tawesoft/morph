@@ -5,35 +5,46 @@
 Morph
 =====
 
-Morph is a small Go code generator that makes it easy to map between
+Morph is a Go code generator that makes it easy to map between
 Go structs, automatically derive new Go structs, and transform functions in 
 different ways.
 
+**Use cases for Morph**
+
+* Serialisation and interoperability with other systems e.g. Json, SQL, binary.
+* Separation between data modeling layers.
+* Functional programming.
+* "Compile-time" reflection.
 
 **Why use Morph?**
 
 * Reduce time spent maintaining boilerplate.
-* Fewer opportunities for bugs in boilerplate caused by typos.
-* Life is too short to maintain boilerplate manually.
+* Fewer opportunities for bugs caused by typos in copy & paste code.
+* Automatically keep boilerplate up to date with changes elsewhere.
+* Maintaining boilerplate manually is depressing.
 
+**Morph features**
 
-**Features**
+ - Fully programmable (in native Go).
 
- - fully programmable (in native Go).
+ - Full support for generics.
 
- - full support for generics.
+ - No runtime reflection.
 
- - no runtime reflection.
+ - No struct field tags to learn or cause clutter.
 
- - no struct field tags to learn or cause clutter.
+ - Elegant and composable building blocks.
 
- - elegant and composable building blocks.
+ - Big library of done-for-you mappings and helpers:
+   * [fieldmappers] for struct fields.
+   * [structmappers] for structs.
+   * [funcwrappers] for functions.
 
- - big library of done-for-you mappings and helpers:
-   * [fieldmappers] for struct fields
-   * [structmappers] for structs
-   * [functionwrappers] for functions
+- Zero external dependencies!
 
+[fieldmappers]: https://pkg.go.dev/github.com/tawesoft/morph/fieldmappers
+[structmappers]: https://pkg.go.dev/github.com/tawesoft/morph/structmappers
+[funcwrappers]: https://pkg.go.dev/github.com/tawesoft/morph/funcwrappers
 
 **Status**
 
@@ -46,10 +57,13 @@ different ways.
 Quick Examples
 --------------
 
+These are all covered in more detail in the tutorials which follow this
+section.
+
 ### Mapping between structs
 
-Take the source code for an example struct, `Apple`, which uses custom-made
-weight and price packages:
+Take the source code for an example struct, Apple, which uses custom-made
+weight and price packages.
 
 ```go
 type Apple struct {
@@ -60,8 +74,10 @@ type Apple struct {
 }
 ```
 
-Let's say we want a version where every field is an integer, for example to 
-serialise it to a binary format on disk, or to store it in a database.
+Let's say we want a new struct, similar to this, but where every field is an
+integer, to make it easier to serialise and interoperate with other systems.
+
+We're going to call it an Orange.
 
 Morph can quickly let us generate:
 
@@ -74,7 +90,7 @@ type Orange struct {
     Price     int64 // price in pence
 }
 
-// AppleToOrange converts an Apple to an Orange.
+// AppleToOrange converts an [Apple] to an [Orange].
 func AppleToOrange(from Apple) Orange {
     return Orange{
         Picked:    from.Picked.UTC().Unix(),
@@ -84,18 +100,83 @@ func AppleToOrange(from Apple) Orange {
     }
 }
 
-// OrangeToApple converts an Orange to an Apple.
+// OrangeToApple converts an [Orange] to an [Apple].
 func OrangeToApple(from Orange) Apple {
     return Apple{
-        Picked:    time.Unix(from.Picked).UTC(),
-        LastEaten: time.Unix(from.LastEaten).UTC(),
+        Picked:    time.Unix(from.Picked, 0).UTC(),
+        LastEaten: time.Unix(from.LastEaten, 0).UTC(),
         Weight:    weight.FromGrams(from.Weight),
         Price:     price.FromPence(from.Price),
     }
 }
 ```
 
+### Comparing structs
+
+Let's take the code for a recursive type:
+
+```go
+type Tree struct {
+    Value string
+    Time time.Time
+    Children []Thing
+}
+```
+
+Morph can also generate custom copy, equals, ordering, deep copy, deep equals, 
+and deep ordering functions -- all without using runtime reflection:
+
+```go
+// TreesEqual returns true if two [Tree] values are equal.
+func TreesEqual(a Tree, b Tree) bool {
+    return strings.EqualFold(a.Value, b.Value) &&
+        a.Time.Equals(b.Time) &&
+        slices.EqualFunc(a.Children, b.Children, TreesEqual)
+}
+
+// Copy returns a copy of the [Tree] t.
+func (t *Tree) Copy() Tree {
+    return Tree{
+        Value: t.Value,
+        Time: t.Time,
+        Children: append(Tree[X]{}, Map(Tree.Copy, t.Children))
+    }
+}
+
+// TreesLessThan returns true if the first [Tree] is less than the second.
+func TreesLessThan(a Tree, b Tree) {
+    // for some specified notion of slice comparison, `LessThanFunc`.
+    return (a.Value < b.Value) ||
+        b.Time.After(a) ||
+        LessThanFunc(a.Children, b.Children, TreesLessThan)
+}
+```
+
+This can also be extended to support recursive types that contain cycles. The
+tutorial goes into this in more detail.
+
+
 ### Wrapping a function in different ways
+
+Go supports higher-order functions and generic types. This means we can
+take an ordinary function, like `func (a A, b B) (A, error)` for any type A 
+and B, and write a generic higher-order function that takes this function as 
+an input and returns a different function as a result.
+
+However, Go is limited in that it can't do this for arbitrary functions of
+any number of input arguments and any number of return values.
+
+We can use Morph to create and compose various automatic transformations of
+functions, thereby increasing our expressive power for functional programming
+in Go.
+
+For example, there's no way to write a higher order function in native Go that 
+takes any possible function that takes a [context.Context] for
+its first argument, and returns a new function without this argument implemented
+by returning the result of calling the original function with [context.TODO].
+
+[context.Context]: https://pkg.go.dev/context#Context
+[context.TODO]: https://pkg.go.dev/context#TODO
 
 Let's take the source code for an example function, Divide:
 
@@ -135,7 +216,7 @@ Tutorials
 ### Structs
 
 * [Apples To Oranges: mapping between Go structs with Morph.]
-* Deep copy and deep equals without runtime reflection.
+* [Deep copy and deep equals without runtime reflection.]
 * Automatically generate custom XML or JSON struct tags.
 * Automatically generate nullable SQL field types for Go structs.
 * Automatically generate a reverse mapping.
@@ -161,3 +242,4 @@ and generate arbitrary code.
 
 
 [Apples To Oranges: mapping between Go structs with Morph.]: doc/mapping-go-structs-with-morph.md
+[Deep copy and deep equals without runtime reflection.]: doc/deep-copy-equals-without-reflection.md

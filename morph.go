@@ -77,23 +77,47 @@ func (f Field) matchSimpleType(Type string) bool {
     return (s == Type) || (s == "*"+Type)
 }
 
-// matchingInput searches the function receiver and input arguments, in order,
-// for the first instance of an input matching the provided type, or a pointer
-// of the provided type. Type constraints are ignored.
-func (fs FunctionSignature) matchingInput(Type string) (match Field, found bool) {
+// Inputs returns a slice containing a Field for each input specified by the
+// function signature, including the method reciever (if any) as the first
+// argument).
+func (fs FunctionSignature) Inputs() []Field {
     var args []Field
     if fs.Receiver.Type != "" {
         args = append(args, fs.Receiver)
     }
     args = append(args, fs.Arguments...)
+    return args
+}
 
-    args = filterFields(args, func(f Field) bool {
+
+// fieldTypeFilterer returns a function that returns true for any Field whose
+// type is a simple type that matches the provided Type.
+func fieldTypeFilterer(Type string) func (f Field) bool {
+    return func(f Field) bool {
         return f.matchSimpleType(Type)
-    })
+    }
+}
+
+// matchingInput searches the function receiver and input arguments, in order,
+// for the first instance of an input matching the provided type, or a pointer
+// of the provided type. Type constraints are ignored.
+func (fs FunctionSignature) matchingInput(Type string) (match Field, found bool) {
+    args := filterFields(fs.Inputs(), fieldTypeFilterer(Type))
     if len(args) < 1 {
         return Field{}, false
     }
     return args[0], true // first one wins
+}
+
+// matchingInputs searches the function receiver and input arguments, in order,
+// for the first two instances of an input matching the provided type, or a
+// pointer of the provided type. Type constraints are ignored.
+func (fs FunctionSignature) matchingInputs(Type string) (match1 Field, match2 Field, found bool) {
+    args := filterFields(fs.Inputs(), fieldTypeFilterer(Type))
+    if len(args) < 2 {
+        return Field{}, Field{}, false
+    }
+    return args[0], args[1], true // first two win
 }
 
 // Function contains a parsed function signature and the raw source code of
@@ -104,7 +128,9 @@ type Function struct {
 }
 
 // Field represents a name and type, such as a field in a struct or a type
-// constraint, or a function argument. In a struct, a field may also contain a
+// constraint, or a function argument.
+//
+// In a struct, a field may also contain a
 // field struct tag, comments, a value (e.g. for initialising
 // that field on a new struct value), a comparer expression (e.g. for
 // comparing two fields of the same type), a copier expression (e.g. for
@@ -305,8 +331,8 @@ type StructMapper func(in Struct) Struct
 // describe a function with at least one method receiver or named argument
 // matching the previous struct type (or a pointer to a struct of that type)
 // (if there are several, the first such occurrence is selected), and exactly
-// one return argument, which must be the type of the receiver struct (or a
-// pointer to a struct of that type). Omit the leading "func" keyword.
+// one return argument of the same type (or a pointer to a struct of that
+// type). Omit the leading "func" keyword.
 //
 // In the signature, the following tokens are rewritten:
 //
@@ -330,7 +356,9 @@ type StructMapper func(in Struct) Struct
 // struct fields.
 //
 // In every field value, the token "$." is rewritten as the input argument
-// name plus ".".
+// name plus ".", the token ".$" is rewritten to the field name prefixed by ".",
+// and the token "$.$" is rewritten as the input argument name plus "." plus
+// the field name.
 //
 // For example, the value "$.FieldOne" will get rewritten to something like
 // "in.FieldOne".
@@ -362,7 +390,7 @@ func (s Struct) Converter(
 
     returns, ok := fs.singleReturn()
     if (!ok) || ((returns.Type != s.Name) && (returns.Type != "*"+s.Name)) {
-        panic(fmt.Errorf(
+        return esc(fmt.Errorf(
             "function signature %q must have a single return value of type %q or *%q; got %q",
             signature, s.Name, s.Name, returns.Type,
         ))
@@ -375,6 +403,247 @@ func (s Struct) Converter(
     body := formatStructConverter(returns.Type, assignments)
 
     fs.Comment = fmt.Sprintf("%s converts [%s] to [%s].", fs.Name, s.From, s.Name)
+    return Function{
+        Signature: fs,
+        Body:      body,
+    }, nil
+}
+
+// Comparer generates Go source code for a function that compares if two
+// struct values are equal.
+//
+// The function is generated to match the provided signature, which must
+// describe a function with at least two method receivers or named arguments
+// matching the struct type (or a pointer to a struct of that type) (if there
+// are several, the first two such occurrences are selected, in order). Omit
+// the leading "func" keyword. Omit the boolean return value.
+//
+// In the signature, the following tokens are rewritten:
+//
+//   - $: the struct type name.
+//
+// For example, the signature argument may look something like:
+//
+//     $Equals(first $, second $)
+//     (source *$) Equals(target *$)
+//
+//  Or simply, explicitly, something like:
+//
+//     Equals(first Thing, second Thing)
+//
+// In this function, the Type, Tag and Comment fields are ignored on the
+// struct fields.
+//
+// In every field comparer, the token "$c." is rewritten as the input argument
+// name plus "." for c == "a" as the first input and c == "b" as the second
+// input. The token ".$" is rewritten to the field name prefixed by ".",
+// and the token "$c.$" is rewritten as the input argument name plus "." plus
+// the field name, for (again) c == "a" or "b".
+//
+// For example, the comparer "$a.$ == $b.X + $b.Y" will get rewritten to
+// something like "first.Foo == second.X + second.Y".
+func (s Struct) Comparer(
+    signature string,
+) (Function, error) {
+    signature = strings.ReplaceAll(signature, "$", s.Name)
+
+    esc := func(err error) (Function, error) {
+        return Function{}, fmt.Errorf(
+            "error creating morph.Struct.Comparer function for type %q -> %q: %w",
+            s.From, s.Name, err,
+        )
+    }
+
+    fs, err := parseFunctionSignatureFromString(signature)
+    if err != nil {
+        return esc(fmt.Errorf("error parsing function signature: %w", err))
+    }
+
+    arg1, arg2, ok := fs.matchingInputs(s.Name)
+    if !ok {
+        return esc(fmt.Errorf(
+            "function signature %q must include two inputs of type %q or *%q",
+            signature, s.Name, s.Name,
+        ))
+    }
+
+    if len(fs.Returns) > 0 {
+        return esc(fmt.Errorf(
+            "function signature %q must not have return values specified",
+            signature,
+        ))
+    }
+    fs.Returns = []Field{
+        {Type: "bool",},
+    }
+
+    comparisons := internal.Map(func(f Field) Field {
+        return rewriteComparer(arg1.Name, arg2.Name, f)
+    }, s.Fields)
+
+    body := formatStructComparer(arg1.Name, arg2.Name, comparisons)
+
+    fs.Comment = fmt.Sprintf("%s returns true if two [%s] values are equal.", fs.Name, s.Name)
+    return Function{
+        Signature: fs,
+        Body:      body,
+    }, nil
+}
+
+// Copier generates Go source code for a function that copies a source struct
+// value to a destination struct value,
+//
+// The function is generated to match the provided signature, which must
+// describe a function with at least one method receiver or named argument
+// matching the source struct type (or a pointer to a struct of that type)
+// (if there are several, the first such occurrence is selected), and exactly
+// one return argument of the same type (or a pointer to a struct of that
+// type), which may be named or unnamed. Omit the leading "func" keyword.
+//
+// In the signature, the following tokens are rewritten:
+//
+//   - $: the struct type name.
+//
+// For example, the signature argument may look something like:
+//
+//     $Copy(from $) $
+//     (from *$) Copy() $
+//
+//  Or simply, explicitly, something like:
+//
+//     ThingCopy(from Thing) (to Thing)
+//
+// In this function, the Type, Tag and Comment fields are ignored on the
+// struct fields.
+//
+// In every field copier, the token "$target." is rewritten as the target
+// argument name plus "." for target == "src" as the source input and target ==
+// "dest" as the output. The token ".$" is rewritten to the field name prefixed
+// by ".", and the token "$target.$" is rewritten as the target argument name
+// plus "." plus the field name, for (again) target == "src" or "dest".
+//
+// For example, the copier "$dest.$ = $src.X + $src.Y" will get rewritten to
+// something like "to.Foo == from.X + from.Y".
+func (s Struct) Copier(
+    signature string,
+) (Function, error) {
+    signature = strings.ReplaceAll(signature, "$", s.Name)
+
+    esc := func(err error) (Function, error) {
+        return Function{}, fmt.Errorf(
+            "error creating morph.Struct.Copier function for type %q -> %q: %w",
+            s.From, s.Name, err,
+        )
+    }
+
+    fs, err := parseFunctionSignatureFromString(signature)
+    if err != nil {
+        return esc(fmt.Errorf("error parsing function signature: %w", err))
+    }
+
+    inputArg, ok := fs.matchingInput(s.Name)
+    if !ok {
+        return esc(fmt.Errorf(
+            "function signature %q must include an inputs of type %q or *%q",
+            signature, s.Name, s.Name,
+        ))
+    }
+
+    if len(fs.Returns) != 1 {
+        return esc(fmt.Errorf(
+            "function signature %q must have exactly one return value",
+            signature,
+        ))
+    }
+
+    copies := internal.Map(func(f Field) Field {
+        return rewriteCopier(inputArg.Name, "_out", f)
+    }, s.Fields)
+
+    body := formatStructCopier(inputArg.Name, "_out", fs.Returns[0].Type, copies)
+
+    fs.Comment = fmt.Sprintf("%s returns a copy of the [%s] %s.", fs.Name, s.Name, inputArg.Name)
+    return Function{
+        Signature: fs,
+        Body:      body,
+    }, nil
+}
+
+// Orderer generates Go source code for a function that compares two struct
+// values and returns true if the first is less than the second.
+//
+// The function is generated to match the provided signature, which must
+// describe a function with at least two method receivers or named arguments
+// matching the struct type (or a pointer to a struct of that type) (if there
+// are several, the first two such occurrences are selected, in order). Omit
+// the leading "func" keyword. Omit the boolean return value.
+//
+// In the signature, the following tokens are rewritten:
+//
+//   - $: the struct type name.
+//
+// For example, the signature argument may look something like:
+//
+//     $LessThan(first $, second $)
+//     (source *$) LessThan(target *$)
+//
+//  Or simply, explicitly, something like:
+//
+//     ThingLessThan(first Thing, second Thing)
+//
+// In this function, the Type, Tag and Comment fields are ignored on the
+// struct fields.
+//
+// In every field orderer, the token "$c." is rewritten as the input argument
+// name plus "." for c == "a" as the first input and c == "b" as the second
+// input. The token ".$" is rewritten to the field name prefixed by ".",
+// and the token "$c.$" is rewritten as the input argument name plus "." plus
+// the field name, for (again) c == "a" or "b".
+//
+// For example, the comparer "$a.$ < ($b.X + $b.Y)" will get rewritten to
+// something like "first.Foo < (second.X + second.Y)".
+func (s Struct) Orderer(
+    signature string,
+) (Function, error) {
+    signature = strings.ReplaceAll(signature, "$", s.Name)
+
+    esc := func(err error) (Function, error) {
+        return Function{}, fmt.Errorf(
+            "error creating morph.Struct.Orderer function for type %q -> %q: %w",
+            s.From, s.Name, err,
+        )
+    }
+
+    fs, err := parseFunctionSignatureFromString(signature)
+    if err != nil {
+        return esc(fmt.Errorf("error parsing function signature: %w", err))
+    }
+
+    arg1, arg2, ok := fs.matchingInputs(s.Name)
+    if !ok {
+        return esc(fmt.Errorf(
+            "function signature %q must include two inputs of type %q or *%q",
+            signature, s.Name, s.Name,
+        ))
+    }
+
+    if len(fs.Returns) > 0 {
+        return esc(fmt.Errorf(
+            "function signature %q must not have return values specified",
+            signature,
+        ))
+    }
+    fs.Returns = []Field{
+        {Type: "bool",},
+    }
+
+    comparisons := internal.Map(func(f Field) Field {
+        return rewriteOrderer(arg1.Name, arg2.Name, f)
+    }, s.Fields)
+
+    body := formatStructOrderer(arg1.Name, arg2.Name, comparisons)
+
+    fs.Comment = fmt.Sprintf("%s returns true if the first [%s] is less than the second.", fs.Name, s.Name)
     return Function{
         Signature: fs,
         Body:      body,
@@ -401,6 +670,35 @@ func rewriteSignatureString(sig string, from string, to string) string {
 // TODO ignore "$." inside string or rune literals
 func postRewriteField(argName string, output Field) Field {
     output.Value = strings.ReplaceAll(output.Value, "$.", argName + ".")
+    return output
+}
+
+// rewriteComparer performs the special '$.' replacement described by
+// [Struct.Comparer].
+//
+// TODO ignore "$." inside string or rune literals
+func rewriteComparer(argName1 string, argName2 string, output Field) Field {
+    output.Comparer = strings.ReplaceAll(output.Comparer, ".$", "."+output.Name)
+    output.Comparer = strings.ReplaceAll(output.Comparer, "$a.", argName1 + ".")
+    output.Comparer = strings.ReplaceAll(output.Comparer, "$b.", argName2 + ".")
+    return output
+}
+
+func rewriteOrderer(argName1 string, argName2 string, output Field) Field {
+    output.Orderer = strings.ReplaceAll(output.Orderer, ".$", "."+output.Name)
+    output.Orderer = strings.ReplaceAll(output.Orderer, "$a.", argName1 + ".")
+    output.Orderer = strings.ReplaceAll(output.Orderer, "$b.", argName2 + ".")
+    return output
+}
+
+// rewriteCopier performs the special '$.' replacement described by
+// [Struct.Copier].
+//
+// TODO ignore "$." inside string or rune literals
+func rewriteCopier(inputName string, outputName string, output Field) Field {
+    output.Copier = strings.ReplaceAll(output.Copier, ".$", "."+output.Name)
+    output.Copier = strings.ReplaceAll(output.Copier, "$src.", inputName + ".")
+    output.Copier = strings.ReplaceAll(output.Copier, "$dest.", outputName + ".")
     return output
 }
 

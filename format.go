@@ -299,7 +299,7 @@ func (s Struct) String() string {
     return string(out)
 }
 
-// formatStructConverterFunc formats the function body created by the
+// formatStructConverter formats the function body created by the
 // [Struct.Converter] method.
 func formatStructConverter(returnType string, assignments []Field) string {
     // source code representation
@@ -323,6 +323,94 @@ func formatStructConverter(returnType string, assignments []Field) string {
         }
     }
     sb.WriteString("\t}")
+    return sb.String()
+}
+
+// formatStructComparer formats the function body created by the
+// [Struct.Comparer] method.
+func formatStructComparer(arg1Name, arg2Name string, fs []Field) string {
+    // source code representation
+    var sb bytes.Buffer
+
+    for i, f := range fs {
+        sb.WriteString(fmt.Sprintf("\t// %s.%s == %s.%s\n",
+            arg1Name, f.Name, arg2Name, f.Name))
+        if f.Comparer == "" {
+            sb.WriteString(fmt.Sprintf("\t_cmp%d := (%s.%s == %s.%s)\n\n",
+                i, arg1Name, f.Name, arg2Name, f.Name))
+        } else {
+            sb.WriteString(fmt.Sprintf("\t_cmp%d := bool(%s)\n\n", i, f.Comparer))
+        }
+    }
+
+    if len(fs) == 0 {
+        sb.WriteString("return true\n")
+    } else {
+        sb.WriteString("return (")
+        for i := 0; i < len(fs); i++ {
+            if i > 0 { sb.WriteString(" && ") }
+            sb.WriteString(fmt.Sprintf("_cmp%d", i))
+        }
+        sb.WriteString(")")
+    }
+
+    return sb.String()
+}
+
+// formatStructCopier formats the function body created by the
+// [Struct.Copier] method.
+func formatStructCopier(inputName string, outputName string, returnType string, fs []Field) string {
+    // source code representation
+    var sb bytes.Buffer
+
+    // Remove pointer from temporary output type.
+    outType := returnType
+    if strings.HasPrefix(returnType, "*") {
+        outType = outType[1:]
+    }
+    sb.WriteString(fmt.Sprintf("\tvar %s %s\n\n", outputName, returnType))
+
+    for _, f := range fs {
+        sb.WriteString(fmt.Sprintf("\t// %s.%s = %s.%s\n",
+            outputName, f.Name, inputName, f.Name))
+        if f.Copier == "" {
+            sb.WriteString(fmt.Sprintf("\t%s.%s = %s.%s\n\n",
+                outputName, f.Name, inputName, f.Name))
+        } else {
+            sb.WriteString(fmt.Sprintf("\t%s\n\n", f.Copier))
+        }
+    }
+
+
+    // Restore pointer
+    sb.WriteString("\treturn ")
+    if strings.HasPrefix(returnType, "*") {
+        sb.WriteRune('&')
+    }
+    sb.WriteString(outputName)
+
+    return sb.String()
+}
+
+// formatStructOrderer formats the function body created by the
+// [Struct.Orderer] method.
+func formatStructOrderer(arg1Name, arg2Name string, fs []Field) string {
+    // source code representation
+    var sb bytes.Buffer
+
+    for i, f := range fs {
+        sb.WriteString(fmt.Sprintf("\t// %s.%s < %s.%s\n",
+            arg1Name, f.Name, arg2Name, f.Name))
+        if f.Orderer == "" {
+            sb.WriteString(fmt.Sprintf("\t_cmp%d := (%s.%s < %s.%s)\n",
+                i, arg1Name, f.Name, arg2Name, f.Name))
+        } else {
+            sb.WriteString(fmt.Sprintf("\t_cmp%d := bool(%s)\n", i, f.Orderer))
+        }
+        sb.WriteString("if _cmp { return true }\n\n")
+    }
+
+    sb.WriteString("return false\n")
     return sb.String()
 }
 

@@ -1,9 +1,14 @@
 // Package fieldmappers provides helpful composable functions that implement
 // [morph.FieldMapper] for mapping the fields between two structs using morph.
+//
+// A subpackage, [morph/fieldmappers/fieldops], provides additional
+// field mappers that set the Comparer, Copier, and Orderer expressions on
+// struct fields.
 package fieldmappers
 
 import (
     "github.com/tawesoft/morph"
+    "github.com/tawesoft/morph/fieldmappers/fieldops"
 )
 
 // Compose returns a new [morph.FieldMapper] that applies each of the given
@@ -83,6 +88,9 @@ func StripTags(input morph.Field, emit func(output morph.Field)) {
 // As it is difficult to distinguish between an int64 that's just an integer,
 // and an int64 that used to be a time, this sets a Reverse method on output
 // field. This allows [Reverse] to automatically perform the reverse mapping.
+//
+// The function sets appropriate Comparer, Copier, and Orderer expressions on
+// the output field and on the reverse output field.
 func TimeToInt64(input morph.Field, emit func(output morph.Field)) {
     if input.Type == "time.Time" {
         f := morph.Field{
@@ -90,14 +98,15 @@ func TimeToInt64(input morph.Field, emit func(output morph.Field)) {
             Type:    "int64",
             Value:   "$.$.UTC().Unix()",
             Comment: "time in seconds since Unix epoch",
-            Reverse: Compose(func(input2 morph.Field, emit func(output morph.Field)) {
-                input2.Type = "time.Time"
-                input2.Value = "time.Unix($.$, 0).UTC()"
-                input2.Comment = input.Comment
-                emit(input2)
+            Reverse: Compose(func(input2 morph.Field, emit2 func(output morph.Field)) {
+                output := input2
+                output.Type = "time.Time"
+                output.Value = "time.Unix($.$, 0).UTC()"
+                output.Comment = input.Comment
+                fieldops.Time(output, emit2)
             }, input.Reverse),
         }
-        emit(f)
+        fieldops.Time(f, emit)
     } else {
         emit(input)
     }

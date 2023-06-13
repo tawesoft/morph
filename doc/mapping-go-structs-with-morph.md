@@ -19,8 +19,9 @@ integer, to make it easier to serialise and interoperate with other systems.
 
 We're going to call it an Orange.
 
-> **Note:** for clarity, going forward we'll be precise and call `type Apple 
-> struct` a struct type definition, and `var apple Apple` a struct value.
+> **Note:** for clarity, going forward we'll be precise and call `type T 
+> struct` a struct type definition, `T` a struct type, `var t T` a struct 
+> value definition, and `t` a struct value.
 
 
 ## Parsing a struct type definition from source code
@@ -34,7 +35,7 @@ parse a file for a struct by name:
 apple, err := morph.ParseStruct("apple.go", nil, "Apple")
 ```
 
-> **Example code:** [morph.ParseStruct example]
+> **Example code:** [morph.ParseStruct (from string) example]
 
 > **Example code:** [morph.ParseStruct (from file) example]
 
@@ -68,17 +69,19 @@ anywhere.
 > ensures morph generates correct code.
  
 [morph.ParseStruct]: https://pkg.go.dev/github.com/tawesoft/morph#ParseStruct
-[morph.ParseStruct example]: https://pkg.go.dev/github.com/tawesoft/morph#example-ParseStruct
-[morph.ParseStruct (from file) example]: https://pkg.go.dev/github.com/tawesoft/morph#example-ParseStruct-from-file
+[morph.ParseStruct (from string) example]: https://pkg.go.dev/github.com/tawesoft/morph#example-ParseStruct-FromString
+[morph.ParseStruct (from file) example]: https://pkg.go.dev/github.com/tawesoft/morph#example-ParseStruct-FromFile
 
 
 ## Mapping to a new struct type definition
 
-There are two ways morph can change our parsed Apple struct into our
-desired Orange struct.
+There are two ways morph can change our parsed Apple struct type definition 
+into our desired Orange struct type definition. We can also combine the two.
 
 * Using a [morph.StructMapper] and the [morph.Struct.Map] method.
 * Using a [morph.FieldMapper] and the [morph.Struct.MapFields] method.
+
+A field mapper is easier to write, but less powerful.
 
 ### Using a StructMapper to rename a struct type
 
@@ -95,12 +98,13 @@ orange := apple.Map(structmappers.Rename("Orange"))
 
 > **Example code:** [structmappers.Rename example]
 
-You might think that it's simpler just to set the Name field on the
-orange directly, but we should always prefer to use a StructMapper. The 
-reason why will become clear soon.
+> **Tip:** You might think that it's simpler just to set the Name field on the
+> `morph.Struct` directly, but we should always prefer to use a StructMapper. 
+> The reason why will become clear soon.
 
 We've taken the first step in morphing our Apple. By printing the resulting
-mapped struct, we can generate some source code:
+mapped struct, we can generate some source code for a new
+struct type definition:
 
 ```go
 fmt.Println(orange)
@@ -182,7 +186,8 @@ apply to. The `emit` function controls what fields are generated on the output.
 If we don't emit the field, that field is removed. If we emit more than once,
 we can emit multiple fields per input field.
 
-The simplest FieldMapper is one that does nothing:
+The simplest FieldMapper is one that does nothing but emit the input
+unchanged:
 
 ```go
 func Passthrough(input morph.Field, emit func(output morph.Field)) {
@@ -191,7 +196,7 @@ func Passthrough(input morph.Field, emit func(output morph.Field)) {
 ```
 
 Let's implement our FieldMapper for weight and price separately, and let's
-discriminate on field type, rather than name, so that the mappers are more
+discriminate on field type, rather than name, so that it's more
 general-purpose and reusable. We'll see another reason why we have separate 
 price and weight implementations, later.
 
@@ -206,6 +211,9 @@ func WeightToInt64(input morph.Field, emit func(output morph.Field)) {
     }
 }
 ```
+
+> **Tip:** it is always safe to copy or modify the input argument inside a 
+> StructMapper or a field mapper.
 
 > **Practice:** what would a FieldMapper for the Price field look like?
 
@@ -239,12 +247,13 @@ type Orange struct {
 ```
 
 > **Tip:** that's a Go source code fragment - we can write that string to a 
-> file and get an automatically generated struct.
+> file and get an automatically generated struct type definition.
 > 
-> If we re-run that process every time Apple changes, then Orange will change 
-> appropriately too.
+> If we re-run that process every time the struct type definition for Apple 
+> changes, then the struct type definition for Orange will also update 
+> appropriately.
 
-[morph.FieldMapper example]: https://pkg.go.dev/github.com/tawesoft/morph#example-FieldMappers
+[morph.FieldMapper example]: https://pkg.go.dev/github.com/tawesoft/morph#example-FieldMapper
 
 
 ## Generating struct value conversion functions
@@ -252,8 +261,8 @@ type Orange struct {
 > **Tip:** 
 > You don't have to have used morph to generate a struct type definition to get
 > value out of this section. It's still useful if you want to learn how to use 
-> morph to create conversion functions for your already-existing struct
-> type definitions.
+> morph to create conversion functions for your existing struct
+> types.
 
 We've now got a full definition for our new Orange struct type, automatically
 derived from our starting Apple type.
@@ -289,8 +298,12 @@ appleAgain := orange.ToApple()
 appleAgain == orange // true
 ```
 
+> **Tip:** if you don't like these as methods, Morph can just as easily 
+> generate functions in the form `AppleToOrange(input Apple) Orange`.
+
 This is achieved through the [morph.Struct.Converter] method, which generates
-source code for a function that converts a struct based on its mapping.
+source code for a function that converts a struct value based on the same
+StructMapper and FieldMapper applications we've seen before.
 
 The generated function matches a supplied function signature, which is
 quite flexible. The function signature must have at least one argument or 
@@ -332,9 +345,14 @@ func (apple Apple) ToOrange() Orange {
 Notice that a helpful doc comment was automatically generated for us
 at the start of the function, too.
 
-Note that the Weight and Price fields haven't been updated. We have to
-go back to our custom FieldMapper implementation and add a Value expression
-to the emitted field.
+Note that the Weight and Price fields haven't been updated, and are left
+at the zero value.
+
+This is because when we created a FieldMapper for weights and prices, we
+defined how to map field types, but not field values.
+
+We have to go back to our custom FieldMapper implementation and add a Value 
+expression to the emitted field.
 
 ```go
 func WeightToInt64(input morph.Field, emit func(output morph.Field)) {
@@ -375,48 +393,49 @@ func (apple Apple) ToOrange() Orange {
 
 But what about the reverse, `ToApple`?
 
-[morph.Struct.Converter example]: https://pkg.go.dev/github.com/tawesoft/morph#example-StructConverter
+[morph.Struct.Converter example]: https://pkg.go.dev/github.com/tawesoft/morph#example-Struct.Converter
 
 
 ### Generating a reverse struct value conversion function
 
 This is where some magic happens.
 
-We want to generate a function, `func (orange Orange) ToApple() Apple`.
+We want to generate a function, `func (orange Orange) ToApple() Apple`,
+that maps Orange struct values back into Apple struct values.
 
-We need to perform the reverse steps to map an Orange morph.Struct back into an 
-Apple morph.Struct (even if we never save the generated type definition 
-anywhere).
+We could do this by reversing our steps, and applying StructMappers and 
+FieldMappers in reverse order to undo the changes we've made.
 
-We could do this by applying FieldMappers that undo the changes we've made.
 That would be a bit awkward, however, because all the fields on our Orange
-are of type `int64` and it's difficult to discriminate between them.
+are now of type `int64` and it's difficult to discriminate between them.
 
-Fortunately, some StructMappers and FieldMappers are reversible, so we can
+Fortunately, many StructMappers and FieldMappers are reversible, so we can
 have morph do this for us!
 
 ```go
-appleFromOrange := orange.Map(structmappers.Reverse)
-orangeToApple, err := appleFromOrange.Converter(converterSignature)
+appleFromOrange := orange.Map(structmappers.Reverse) // magic!!!
 ```
 
-> **Tip:** the const `converterSignature` template string from earlier came in 
-> handy! We didn't have to specify a function signature again.
+> **Tip:** the const `converterSignature` template string from the 
+> previous section came in handy! Thanks to the token replacement, we didn't 
+> have to specify a function signature again.
 
-But before we do, let's go back to our custom FieldMappers one last time,
-and add the finishing touches to make them reversible.
+But before we do this, let's go back to our custom FieldMapper one last time,
+and add the finishing touches to make it reversible too.
 
 A reverse function is simple to write. It is just a FieldMapper, but as it is 
 only called on a field that has explicitly set it as its reverse function, 
 it does not need to discriminate on name or type. The original mapper then 
 registers the Reverse function on the emitted field.
 
-We then need to update our FieldMapper to set the Reverse function on the
+So, we need to update our FieldMapper to set the Reverse function on the
 emitted field. For good measure, we can set the Comment, too.
 
-When we set the Reverse function on a field, we compose it on the field's 
+When we set the Reverse function on a field, we compose it with the field's 
 existing reverse function. This means that even if we've applied several 
 transformations to a field, we can still reverse them all in order.
+
+> **Tip:** if a mapping is not reversible, set the Reverse function to nil.
 
 This makes our full custom mapper for the weight field look as follows:
 
@@ -443,14 +462,16 @@ func WeightToInt64(input morph.Field, emit func(output morph.Field)) {
 }
 ```
 
-And finally:
+So finally:
 
 ```go
+appleFromOrange := orange.Map(structmappers.Reverse)
+orangeToApple, err := appleFromOrange.Converter(converterSignature)
 fmt.Println(orangeToApple)
 ```
 
-This gives our generated source code for a function that converts
-values of type Orange back to values of type Apple.
+This outputs generated source code for a function that converts
+struct values of type Orange back to struct values of type Apple:
 
 ```go
 // ToApple converts [Orange] to [Apple].
@@ -467,7 +488,7 @@ func (orange Orange) ToApple() Apple {
 > **Example:** [morph.Struct.Converter reverse example]
  
 
-[morph.Struct.Converter reverse example]: https://pkg.go.dev/github.com/tawesoft/morph#example-Struct_Converter_reverse
+[morph.Struct.Converter reverse example]: https://pkg.go.dev/github.com/tawesoft/morph#example-Struct.Converter-Reverse
 
 
 [morph.StructMapper]: https://pkg.go.dev/github.com/tawesoft/morph#StructMapper
