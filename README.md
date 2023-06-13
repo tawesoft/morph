@@ -162,13 +162,13 @@ any number of input arguments and any number of return values, without
 having to create a new function for every combination of input and output 
 counts.
 
-We can use Morph to create and compose various automatic transformations of
-functions, thereby increasing our expressive power for functional programming
-in Go.
-
 For example, there's no way to write a higher order function in native Go that
 automatically applies [context.TODO] to any possible function that takes a
 [context.Context] for its first argument.
+
+We can use Morph to create and compose various automatic transformations of
+functions, thereby increasing our expressive power for functional programming
+in Go.
 
 [context.Context]: https://pkg.go.dev/context#Context
 [context.TODO]: https://pkg.go.dev/context#TODO
