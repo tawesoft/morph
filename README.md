@@ -164,10 +164,9 @@ We can use Morph to create and compose various automatic transformations of
 functions, thereby increasing our expressive power for functional programming
 in Go.
 
-For example, there's no way to write a higher order function in native Go that 
-takes any possible function that takes a [context.Context] for
-its first argument, and returns a new function without this argument implemented
-by returning the result of calling the original function with [context.TODO].
+For example, there's no way to write a higher order function in native Go that
+automatically applies [context.TODO] to any possible function that takes a
+[context.Context] for its first argument.
 
 [context.Context]: https://pkg.go.dev/context#Context
 [context.TODO]: https://pkg.go.dev/context#TODO
