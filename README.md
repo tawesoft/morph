@@ -199,10 +199,6 @@ func DividePromise(x, b float64) func () (float64, error) { /* ... */ }
 // DivideResult returns the result of Divide(a,b) collected into a Result 
 // sum type.
 func DivideResult(a, b float64) result.R[float64] { /* ... */ }
-
-// Decimal is a method on a Fraction that converts a value such as
-// Fraction{Numerator: 1, Denominator: 3}` into a result such as 0.3333.
-func (f Fraction) Decimal() (float64, error) { /* ... */ }
 ```
 
 Tutorials
