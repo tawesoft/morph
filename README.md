@@ -6,8 +6,8 @@ Morph
 =====
 
 Morph is a Go code generator that makes it easy to map between
-Go structs, automatically derive new Go structs, and transform functions in 
-different ways.
+Go structs, automatically derive new Go structs, compare structs, and transform 
+functions in different ways.
 
 **Use cases for Morph**
 
@@ -26,20 +26,14 @@ different ways.
 **Morph features**
 
  - Fully programmable (in native Go).
-
  - Full support for generics.
-
  - No runtime reflection.
-
  - No struct field tags to learn or cause clutter.
-
  - Elegant and composable building blocks.
-
  - Big library of done-for-you mappings and helpers:
    * [fieldmappers] for struct fields.
    * [structmappers] for structs.
    * [funcwrappers] for functions.
-
 - Zero external dependencies!
 
 [fieldmappers]: https://pkg.go.dev/github.com/tawesoft/morph/fieldmappers
