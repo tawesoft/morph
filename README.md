@@ -158,7 +158,9 @@ and B, and write a generic higher-order function that takes this function as
 an input and returns a different function as a result.
 
 However, Go is limited in that it can't do this for arbitrary functions of
-any number of input arguments and any number of return values.
+any number of input arguments and any number of return values, without 
+having to create a new function for every combination of input and output 
+counts.
 
 We can use Morph to create and compose various automatic transformations of
 functions, thereby increasing our expressive power for functional programming
