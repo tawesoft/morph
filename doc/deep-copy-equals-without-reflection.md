@@ -1,6 +1,6 @@
 [![Morph](../morph.png)](https://github.com/tawesoft/morph)
 
-# Deep copy, deep equals, and ordering without runtime reflection using Morph
+# Deep copies, deep equality, and ordering: comparing struct values without runtime reflection using Morph
 
 In the [previous tutorial], we learnt about parsing a struct type definition
 from Go source code and applying StructMapper and FieldMapper transformations
@@ -158,7 +158,7 @@ func PersonEquals(first Person, second Person) {
 ```
 
 
-## Generating a custom "deep-equals" function
+## Generating a custom "deeply equal" function
 
 Let's consider a few container types.
 
@@ -260,7 +260,7 @@ make this reusable and composable so that it can quickly be applied to any
 struct type with any number of fields.
 
 
-## Generating a copy function.
+## Generating a custom copy function
 
 Generating a copy function is much the same as creating an equality function: 
 parse a struct type definition, set the Copier expression on each relevant
@@ -285,7 +285,7 @@ or with `dest` for the named or unnamed return value. In this way, a copier
 expression can be written for any input and output, regardless of what name 
 they are given (or not given) in the function signature.
 
-## Generating a "deep copy" function:
+## Generating a custom "deep copy" function
 
 For example, let's revisit `Tree`:
 
@@ -319,7 +319,7 @@ A "deep copy" that also allows for cycles can be performed using the visitor
 technique described in a previous section.
 
 
-## Generating an ordering function.
+## Generating a custom ordering function
 
 An ordering function can be used to sort a collection of items. Like Go, we
 describe an ordering by implementing a "less" function i.e. a function 
@@ -349,7 +349,7 @@ or with `b` for the second argument in the function signature. In this way,
 an orderer expression can be written for any two inputs, regardless of what
 name they are given in the function signature.
 
-## Generating a "deep ordering" function.
+## Generating a custom "deeply ordering" function
 
 For example, let's revisit `Tree`:
 

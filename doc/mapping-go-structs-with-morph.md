@@ -1,6 +1,6 @@
 [![Morph](../morph.png)](https://github.com/tawesoft/morph)
 
-# Apples To Oranges: mapping between Go structs with Morph
+# Apples to Oranges: mapping between Go structs with Morph
 
 Take the source code for an example struct, Apple, which uses custom-made
 weight and price packages.
