@@ -578,3 +578,129 @@ type List[X comparable] struct {
     //	return (_cmp0 && _cmp1)
     // }
 }
+
+func Example_xml() {
+    source := `
+package example
+
+type Address struct {
+    Since       time.Time // when they started living there
+    FlatNumber  string
+    HouseNumber string
+    Street      string
+    City        string
+    Country     string
+    Postcode    string
+}
+
+type Person struct {
+    Title      string
+    GivenName  string
+    FamilyName string
+    Address    Address
+}
+`
+
+    person := must(morph.ParseStruct("example.go", source, "Person"))
+    address := must(morph.ParseStruct("example.go", source, "Address"))
+
+    // make string comparisons case-insensitive
+    person = person.MapFields(fieldops.StringsEqualFold)
+    address = address.MapFields(fieldops.StringsEqualFold)
+
+    // also set equality operators for time.Time fields to use the time.Equals
+    // method, not '=='.
+    address = address.MapFields(fieldops.Time)
+
+    converterSig := "$fromTo$TO($from $From) $To"
+    comparerSig := "$Equals(a $, b $)"
+
+    // map Address to a new AddressJson type
+    addressJson := address.Map(
+        structmappers.Rename("addressJson"),
+    ).MapFields(
+        fieldmappers.StripComments,
+    )
+
+    // map Person to a new PersonJson type
+    personJson := person.Map(
+        structmappers.Rename("personJson"),
+    ).MapFields(
+        fieldmappers.StripComments,
+        // convert Address field to type *AddressJson
+        fieldmappers.Conditionally(
+            fieldmappers.FilterTypes("Address"),
+            fieldmappers.RewriteType(
+                "*$Json",
+                "$fromTo$TO($.$)",
+                "$fromTo$TO($.$)",
+            ),
+        ),
+    )
+
+    // fmt.Println(must(personJson.Converter(converterSig)))
+    // fmt.Println(must(personJson.Map(structmappers.Reverse).Converter(converterSig)))
+
+    // this version uses a pointer
+    personJson = person.Map(
+        structmappers.Rename("personJson"),
+    ).MapFields(
+        fieldmappers.StripComments,
+        // convert Address field to type *AddressJson
+        fieldmappers.Conditionally(
+            fieldmappers.FilterTypes("Address"),
+            fieldmappers.RewriteType(
+                "*$Json",
+                "toPtr($.$, zeroFn($FromEquals), $fromTo$TO)",
+                "fromPtr($.$, $fromTo$TO)",
+            ),
+        ),
+    )
+
+    addressJsonEquals := must(addressJson.Comparer(comparerSig))
+    addressToAddressJson := must(addressJson.Converter(converterSig))
+    addressJsonToAddress := must(addressJson.Map(structmappers.Reverse).Converter(converterSig))
+
+    personToPersonJson := must(personJson.Converter(converterSig))
+    personJsonToPerson := must(personJson.Map(structmappers.Reverse).Converter(converterSig))
+
+    fmt.Println(addressJson)
+    fmt.Println(addressJsonEquals)
+    fmt.Println(addressToAddressJson)
+    fmt.Println(addressJsonToAddress)
+
+    fmt.Println(personJson)
+    fmt.Println(personToPersonJson)
+    fmt.Println(personJsonToPerson)
+
+    // Output:
+}
+
+// zeroFn takes a function that returns true if two values are equal, and
+// returns a new function that returns true if a value is equal to the zero
+// value.
+func zeroFn[X comparable](equal func(a X, b X) bool) func(X) bool {
+    return func(in X) bool {
+        var zero X
+        return equal(in, zero)
+    }
+}
+
+// toPtr returns nil if the input is equal to the zero value, or otherwise
+// returns a pointer to the value returned by applying the conversion function
+// to the input.
+func toPtr[In, Out comparable](in In, zero func(In) bool, convert func(In) Out) *Out {
+    if zero(in) { return nil }
+    out := convert(in)
+    return &out
+}
+
+// fromPtr returns the zero value (of type Out) if the input is nil, otherwise
+// returns the result of applying the conversion function to the value obtained
+// by dereferencing the input pointer.
+func fromPtr[In, Out comparable](in *In, convert func(In) Out) Out {
+    var zero Out
+    if in == nil { return zero }
+    out := convert(*in)
+    return out
+}

@@ -7,8 +7,11 @@
 package fieldmappers
 
 import (
+    "strings"
+
     "github.com/tawesoft/morph"
     "github.com/tawesoft/morph/fieldmappers/fieldops"
+    "github.com/tawesoft/morph/internal"
 )
 
 // Compose returns a new [morph.FieldMapper] that applies each of the given
@@ -41,19 +44,15 @@ func All(input morph.Field, emit func(output morph.Field)) {
     emit(input)
 }
 
+// None is a [morph.FieldMapper] that deletes every input.
+func None(input morph.Field, emit func(output morph.Field)) {
+    // intentionally left empty
+}
+
 // DeleteNamed returns a new [morph.FieldMapper] that removes the named fields
 // from a struct.
 func DeleteNamed(names ... string) morph.FieldMapper {
-    // O(1)ish lookup
-    nameMap := make(map[string]struct{})
-    for _, name := range names {
-        nameMap[name] = struct{}{}
-    }
-    return func(input morph.Field, emit func(output morph.Field)) {
-        if _, exists := nameMap[input.Name]; !exists {
-            emit(input)
-        }
-    }
+    return Conditionally(FilterNamed(names...), None)
 }
 
 // Filter returns a new [morph.FieldMapper] that only emits fields where
@@ -63,6 +62,75 @@ func Filter(filter func(input morph.Field) bool) morph.FieldMapper {
         if filter(input) {
             emit(input)
         }
+    }
+}
+
+// FilterNamed returns a filter that returns true for any field with a name
+// matching any provided name argument.
+func FilterNamed(names ... string) func(morph.Field) bool {
+    // O(1)ish lookup
+    nameMap := make(map[string]struct{})
+    for _, name := range names {
+        nameMap[name] = struct{}{}
+    }
+    return func(input morph.Field) bool {
+        _, exists := nameMap[input.Name]
+        return exists
+    }
+}
+
+// FilterTypes returns a filter that returns true for any field with a type
+// name matching any provided type name argument.
+func FilterTypes(types ... string) func(morph.Field) bool {
+    // O(1)ish lookup
+    nameMap := make(map[string]struct{})
+    for _, name := range types {
+        nameMap[name] = struct{}{}
+    }
+    return func(input morph.Field) bool {
+        _, exists := nameMap[input.Type]
+        return exists
+    }
+}
+
+// Conditionally returns a new [morph.FieldMapper] that applies mapper
+// to any field where the filter func returns true, or emits the field
+// unchanged if the filter func returns false.
+func Conditionally(filter func(morph.Field) bool, mapper morph.FieldMapper) morph.FieldMapper {
+    return func(input morph.Field, emit func(output morph.Field)) {
+        if filter(input) {
+            mapper(input, emit)
+        } else {
+            emit(input)
+        }
+    }
+}
+
+// RewriteType returns a new [morph.FieldMapper] that rewrites a field's type
+// name to the given type name.
+//
+// The convert and reverse arguments describe field value patterns used by
+// [morph.Converter] to convert to and from this type.
+//
+// Additionally, the tokens $from, $From, $to, $To in convert and reverse
+// are replaced by source and destination types (first letter is always
+// lowercased in $from or $to).
+//
+// The token `$` in Type is replaced by the current type name.
+func RewriteType(Type string, convert string, reverse string) morph.FieldMapper {
+    return func(in morph.Field, emit func(morph.Field)) {
+        out := in
+        out.Type = strings.Replace(Type, "$", in.Type, 1)
+        out.Value = internal.RewriteSignatureString(convert, in.Type, out.Type)
+        out.Comment = "from " + in.Type
+        out.Reverse = Compose(func(in2 morph.Field, emit2 func(morph.Field)) {
+            out2 := in2
+            out2.Type = in.Type
+            out2.Value = internal.RewriteSignatureString(reverse, out.Type, in.Type)
+            out2.Comment = in.Comment
+            emit2(out2)
+        }, in.Reverse)
+        emit(out)
     }
 }
 

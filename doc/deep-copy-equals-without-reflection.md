@@ -401,6 +401,5 @@ func [X constraints.Ordered] LessThanFunc(as, bs []X, lt func(X, X)) bool {
 }
 ```
 
-
 A "deep ordering" that also allows for cycles can be performed using the 
 visitor technique described in a previous section.

@@ -317,6 +317,9 @@ func formatStructConverter(returnType string, assignments []Field) string {
     sb.WriteString("{\n")
     for _, asgn := range assignments {
         if asgn.Value == "" {
+            // TODO just assign with =
+            sb.WriteString(fmt.Sprintf("\t\t// %s is the zero value.\n", asgn.Name))
+        } else if asgn.Value == "nil" {
             sb.WriteString(fmt.Sprintf("\t\t// %s is the zero value.\n", asgn.Name))
         } else {
             sb.WriteString(fmt.Sprintf("\t\t%s: %s,\n", asgn.Name, asgn.Value))

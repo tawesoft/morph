@@ -11,7 +11,8 @@ functions in different ways.
 
 **Use cases for Morph**
 
-* Serialisation and interoperability with other systems e.g. Json, SQL, binary.
+* Serialisation and interoperability with other systems e.g. JSON, XML, SQL, 
+  and binary.
 * Separation between data modeling layers.
 * Functional programming.
 * "Compile-time" reflection.
@@ -20,8 +21,6 @@ functions in different ways.
 
 * Reduce time spent maintaining boilerplate.
 * Fewer opportunities for bugs caused by typos in copy & paste code.
-* Automatically keep boilerplate up to date with changes elsewhere.
-* Maintaining boilerplate manually is depressing.
 
 **Morph features**
 
@@ -208,9 +207,9 @@ Tutorials
 
 * [Apples To Oranges: mapping between Go structs with Morph.]
 * [Deep copy and deep equals without runtime reflection.]
-* Automatically generate custom XML or JSON struct tags.
+* [Automatically generate XML or JSON struct tags.]
 * Automatically generate nullable SQL field types for Go structs.
-* Automatically generate a reverse mapping.
+* Mapping to column-orientated data types.
 
 ### Functions
 
@@ -220,7 +219,6 @@ Tutorials
 
 ### General
 
-* `$` token substitution in morph.
 * Using morph with `go generate`.
 
 
@@ -234,3 +232,4 @@ and generate arbitrary code.
 
 [Apples To Oranges: mapping between Go structs with Morph.]: doc/mapping-go-structs-with-morph.md
 [Deep copy and deep equals without runtime reflection.]: doc/deep-copy-equals-without-reflection.md
+[Automatically generate XML or JSON struct tags.]: doc/auto-xml-json-struct-tags.md

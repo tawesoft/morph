@@ -8,6 +8,35 @@ import (
     "github.com/tawesoft/morph/tag"
 )
 
+// RewriteSignatureString performs the special '$' replacement in a function
+// signature specified as a string.
+//
+// TODO ignore "$" inside string literal and use tokenReplacer instead
+//   note -- pass through other occurences of "$" unchanged
+func RewriteSignatureString(sig string, from string, to string) string {
+    if strings.HasPrefix(from, "*") { from = from[1:] }
+    if strings.HasPrefix(to, "*") { to = to[1:] }
+
+    lower := func(x string) string {
+        if len(x) == 0 { return x }
+        if len(x) == 1 { strings.ToLower(x) }
+        return strings.ToLower(string(x[0])) + x[1:]
+    }
+    upper := func(x string) string {
+        if len(x) == 0 { return x }
+        if len(x) == 1 { strings.ToUpper(x) }
+        return strings.ToUpper(string(x[0])) + x[1:]
+    }
+
+    sig = strings.ReplaceAll(sig, "$FROM", upper(from))
+    sig = strings.ReplaceAll(sig, "$From", from)
+    sig = strings.ReplaceAll(sig, "$from", lower(from))
+    sig = strings.ReplaceAll(sig, "$TO",   upper(to))
+    sig = strings.ReplaceAll(sig, "$To",   to)
+    sig = strings.ReplaceAll(sig, "$to",   lower(to))
+    return sig
+}
+
 type Set[X comparable] interface {
     Add(x X)
     Contains(x X) bool

@@ -652,16 +652,10 @@ func (s Struct) Orderer(
 
 // rewriteSignatureString performs the special '$' replacement in a function
 // signature specified as a string.
+//
+// depreacted: use internal.RewriteSignatureString instead.
 func rewriteSignatureString(sig string, from string, to string) string {
-    lower := func(x string) string {
-        if len(x) == 0 { return x }
-        if len(x) == 1 { strings.ToLower(x) }
-        return strings.ToLower(string(x[0])) + x[1:]
-    }
-    sig = strings.ReplaceAll(sig, "$From", from)
-    sig = strings.ReplaceAll(sig, "$To", to)
-    sig = strings.ReplaceAll(sig, "$from", lower(from))
-    return sig
+    return internal.RewriteSignatureString(sig, from, to)
 }
 
 // postRewriteField performs the special '$.' replacement described by

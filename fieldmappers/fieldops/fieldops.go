@@ -7,16 +7,46 @@
 package fieldops
 
 import (
+    "fmt"
+
     "github.com/tawesoft/morph"
 )
 
-// Time sets appropriate expressions on fields of type [time.Time].
+// NoConvert is a [morph.FieldMapper] that sets the Value expression on a field
+// to use the zero value of the destination type when converting between two
+// structs with [morph.Struct.Converter].
+func NoConvert(in morph.Field, emit func(out morph.Field)) {
+    out := in
+    out.Value = fmt.Sprintf("nil", in.Type, in.Type) // nil is special
+    emit(out)
+}
+
+// Time is a [morph.FieldMapper][ that sets appropriate expressions on fields
+// of type [time.Time].
 func Time(in morph.Field, emit func(out morph.Field)) {
     if in.Type == "time.Time" {
         out := in
         out.Comparer = "$a.$.Equals($b.$)"
         out.Copier = ""
         out.Orderer = "$b.$.After($a.$)"
+        emit(out)
+    } else {
+        emit(in)
+    }
+}
+
+// StringsEqualFold is a [morph.FieldMapper] that sets comparer expressions on
+// strings to use [strings.EqualFold] to perform a case-insensitive
+// comparison using simple Unicode case-folding.
+//
+// For more advanced folding, use something like
+// [github.com/tawesoft/golib/v2/text/fold].
+//
+// [github.com/tawesoft/golib/v2/text/fold]: https://pkg.go.dev/github.com/tawesoft/golib/v2/text/fold
+func StringsEqualFold(in morph.Field, emit func(out morph.Field)) {
+    if in.Type == "string" {
+        out := in
+        out.Comparer = "strings.EqualFold($a.$, $b.$)"
         emit(out)
     } else {
         emit(in)
