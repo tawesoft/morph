@@ -415,3 +415,7 @@ func (p *Person) UnmarshalJSON(b []byte) error {
     return err
 }
 ```
+
+---
+
+**Next:** [Mapping to column-orientated data types.](./column-orientated-structs.md)

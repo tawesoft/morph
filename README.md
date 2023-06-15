@@ -15,6 +15,7 @@ functions in different ways.
   and binary.
 * Separation between data modeling layers.
 * Functional programming.
+* Graphics programming.
 * "Compile-time" reflection.
 
 **Why use Morph?**
@@ -205,11 +206,10 @@ Tutorials
 
 ### Structs
 
-* [Apples To Oranges: mapping between Go structs with Morph.]
-* [Deep copy and deep equals without runtime reflection.]
-* [Automatically generate XML or JSON struct tags.]
-* Automatically generate nullable SQL field types for Go structs.
-* Mapping to column-orientated data types.
+1. [Apples To Oranges: mapping between Go structs with Morph.]
+2. [Deep copy and deep equals without runtime reflection.]
+3. [Automatically generate XML or JSON struct tags.]
+4. [Mapping to column-orientated data types.]
 
 ### Functions
 
@@ -219,8 +219,13 @@ Tutorials
 
 ### General
 
-* Using morph with `go generate`.
+* Don't repeat yourself: the `$token` replacement reference.
+* Creating a morph build step with `go generate`.
 
+[Apples To Oranges: mapping between Go structs with Morph.]: doc/mapping-go-structs-with-morph.md
+[Deep copy and deep equals without runtime reflection.]: doc/deep-copy-equals-without-reflection.md
+[Automatically generate XML or JSON struct tags.]: doc/auto-xml-json-struct-tags.md
+[Mapping to column-orientated data types.]: ./doc/column-orientated-structs.md
 
 Security Model
 --------------
@@ -228,8 +233,3 @@ Security Model
 WARNING: It is assumed that all inputs are trusted. DO NOT accept arbitrary
 input from untrusted sources under any circumstances, as this will parse
 and generate arbitrary code.
-
-
-[Apples To Oranges: mapping between Go structs with Morph.]: doc/mapping-go-structs-with-morph.md
-[Deep copy and deep equals without runtime reflection.]: doc/deep-copy-equals-without-reflection.md
-[Automatically generate XML or JSON struct tags.]: doc/auto-xml-json-struct-tags.md

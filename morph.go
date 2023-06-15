@@ -5,8 +5,8 @@
 // specified.
 //
 // Need help? Ask on morph's GitHub issue tracker or check out the tutorials
-// on the morph GitHub repo. Also, paid commercial support and training is
-// available via [Open Source at Tawesoft].
+// in the README. Also, paid commercial support and training is available
+// via [Open Source at Tawesoft].
 //
 // [Open Source at Tawesoft]: https://www.tawesoft.co.uk/products/open-source-software
 //
@@ -128,42 +128,118 @@ type Function struct {
 }
 
 // Field represents a name and type, such as a field in a struct or a type
-// constraint, or a function argument.
+// constraint, or a function argument like "in []Things".
 //
-// In a struct, a field may also contain a
-// field struct tag, comments, a value (e.g. for initialising
-// that field on a new struct value), a comparer expression (e.g. for
-// comparing two fields of the same type), a copier expression (e.g. for
-// performing a deep copy), and a reverse function that performs the opposite
-// of a mapping, if possible.
+// Fields should be considered readonly, except inside a FieldMapper or when
+// working on a copy.
 //
-// An empty string for the value field means the zero value. An empty string
-// for the comparer field means compare with "==". An empty string for the
-// copier field means copy with "=". Reverse may be nil.
+// When appearing in a struct, a field may also contain a struct tag,
+// comments, and several expressions encoded as strings.
 //
 // The Tag, if any, does not include surrounding quote marks, and the Comment,
 // if any, does not have a trailing new line or comment characters such as
 // a starting "/*", an ending "*/", or "//" at the start of each line.
 //
-// Fields are always passed by value, so it is safe to mutate an input field
-// argument anywhere.
+// These expressions include:
 //
-// When creating a Reverse FieldMapper, care should be taken to not overwrite
-// a field's existing Reverse. This can be achieved by composing the two
-// functions with the Compose function in the fieldmappers sub package, e.g.
-// `NewField.Reverse = fieldmappers.Compose(newfunc, OldField.Reverse))`.
+// * A converter assignment expression for mapping a field value from a source
+//   struct to a destination struct of a different type. An empty string means
+//   assign the source field unchanged.
+//
+// * A comparer boolean expression for comparing two fields of the same type.
+//   An empty string means compare with "==".
+//
+// * A copier assignment expression for mapping a field value from a source
+//   struct to a destination struct of the same type. An empty string means
+//   assign the source field unchanged.
+//
+// * An orderer boolean expression for defining a sorting order by implementing
+//   the concept of "less than". An empty string means use "<".
+//
+// * Any number of custom-defined expressions which are either boolean
+//   expressions (like comparer and orderer), assignments (like converter
+//   and copier), or void expressions that operate on a field on a single
+//   struct but do not generate any value to be assigned or compared.
+//
+// In a boolean expression, the value "true" always compares true. The special
+// value "skip" is also always treated as true.
+//
+// In an assignment expression, the special value "zero" means assign the
+// zero value to the destination field, and the special value "skip" means
+// don't assign any value to the destination field (this distinction matters
+// if the output is a destination passed by reference instead of a return
+// value).
+//
+// In a void expression, the empty string means apply the defined default
+// expression. The special value "skip" means don't apply any expression to
+// the field.
+//
+// Each expression can contain "$-token" replacements that are replaced with
+// a computed string:
+//
+// * "$from", "$From", "$FROM" are replaced with the name of a struct type
+//   before it was renamed (this reads the [Struct.From] field). "$from" has
+//   the first letter always changed to lower case. "$FROM" has the first letter
+//   always changed to upper case.
+//
+// * "$to", "$To", "$TO" are replaced with the name of the struct type (this
+//   reads the [Struct.Name] field). "$to" has the first letter always changed
+//   to lower case. "$TO" has the first letter always changed to uppercase.
+//
+// * "$a" and "$b", when followed by a dot, are replaced inside boolean
+//   expressions with the name of two input arguments.
+//
+// * "$self" alone, when followed by a dot, is replaced inside a void
+//    expression with the name of an input argument.
+//
+// * "$src" and "$dest", when followed by a dot, are replaced inside assignment
+//   expressions with the name of input and output arguments.
+//
+// * "$" alone, when following "$a", "$b", "$src", "$dest", or "$self" plus a
+//   dot, is replaced with the name of the field on the appropriate argument.
+//
+// Additionally, in a [FieldMapper], in Name or Type, "$" (alone) is replaced
+// with the name or type of the input field, respectively. Unlike the other
+// token replacements, this one happens immediately upon applying a field
+// mapper.
+//
+// A field appearing in a struct may also define a reverse function, which
+// is a [FieldMapper] that performs the opposite of a FieldMapper applied to
+// the field. It is not necessary that the result of applying a reverse
+// function is itself reversible. Not all mappings are reversible, so this may
+// be nil.
+//
+// When creating a reverse function, care should be taken to not overwrite
+// a field's existing reverse function. This can be achieved by composing the
+// two functions with the Compose function in the fieldmappers sub package, e.g.
+// `myNewField.Reverse = fieldmappers.Compose(newfunc, myOldField.Reverse))`
+// (this is safe even when myOldField.Reverse is nil).
 type Field struct {
     Name     string
     Type     string
-    Value    string
+
+    // For fields appearing in structs only...
     Tag      string
     Comment  string
     Reverse  FieldMapper
 
-    Comparer string // equality
-    Orderer string  // less than
-    Copier string   // assignment
+    // Expressions (also appearing in structs only)...
+    Value     string // TODO remove
+    Converter string
+    Comparer  string
+    Orderer   string
+    Copier    string
+    Custom FieldExpression
 }
+
+type FieldExpression interface {
+    fieldExpression()
+}
+
+type BooleanFieldExpression struct {
+    Default string // e.g. "
+}
+func (BooleanFieldExpression) fieldExpression() {}
 
 // AppendTags returns a new Field with the given tags appended to the field's
 // existing tags (if any), joined with a space separator, as is the convention.

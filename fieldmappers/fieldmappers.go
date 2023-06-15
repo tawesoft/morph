@@ -65,6 +65,15 @@ func Filter(filter func(input morph.Field) bool) morph.FieldMapper {
     }
 }
 
+// FilterInv returns a filter that implements the inverse of the provided
+// filter. Wherever the input filter would return true, the output filter
+// instead returns false, and vice versa.
+func FilterInv(filter func(input morph.Field) bool) func(input morph.Field) bool {
+    return func(input morph.Field) bool {
+        return !filter(input)
+    }
+}
+
 // FilterNamed returns a filter that returns true for any field with a name
 // matching any provided name argument.
 func FilterNamed(names ... string) func(morph.Field) bool {
@@ -91,6 +100,12 @@ func FilterTypes(types ... string) func(morph.Field) bool {
         _, exists := nameMap[input.Type]
         return exists
     }
+}
+
+// FilterSlices is a filter that returns true for any field with a type
+// that is a slice.
+func FilterSlices(input morph.Field) bool {
+    return strings.HasPrefix(input.Type, "[]")
 }
 
 // Conditionally returns a new [morph.FieldMapper] that applies mapper

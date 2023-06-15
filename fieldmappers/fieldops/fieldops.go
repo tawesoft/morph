@@ -7,8 +7,6 @@
 package fieldops
 
 import (
-    "fmt"
-
     "github.com/tawesoft/morph"
 )
 
@@ -17,7 +15,7 @@ import (
 // structs with [morph.Struct.Converter].
 func NoConvert(in morph.Field, emit func(out morph.Field)) {
     out := in
-    out.Value = fmt.Sprintf("nil", in.Type, in.Type) // nil is special
+    out.Value = "zero"
     emit(out)
 }
 
@@ -26,9 +24,10 @@ func NoConvert(in morph.Field, emit func(out morph.Field)) {
 func Time(in morph.Field, emit func(out morph.Field)) {
     if in.Type == "time.Time" {
         out := in
+        out.Value    = ""
         out.Comparer = "$a.$.Equals($b.$)"
-        out.Copier = ""
-        out.Orderer = "$b.$.After($a.$)"
+        out.Copier   = ""
+        out.Orderer  = "$b.$.After($a.$)"
         emit(out)
     } else {
         emit(in)

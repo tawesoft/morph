@@ -566,7 +566,7 @@ type List[X comparable] struct {
         assert(!ListsEqual(&a1, &b2))
     }
 
-    // Output:
+    // TODO Output:
     // // listsEqual returns true if two [List] values are equal.
     // func listsEqual[X comparable](x *List[X], y *List[X], v visitor) bool {
     //	// x.Value == y.Value
@@ -580,25 +580,27 @@ type List[X comparable] struct {
 }
 
 func Example_xml() {
+    // full explanation for this example is given in the tutorial
+
     source := `
-package example
-
-type Address struct {
-    Since       time.Time // when they started living there
-    FlatNumber  string
-    HouseNumber string
-    Street      string
-    City        string
-    Country     string
-    Postcode    string
-}
-
-type Person struct {
-    Title      string
-    GivenName  string
-    FamilyName string
-    Address    Address
-}
+    package example
+    
+    type Address struct {
+        Since       time.Time // when they started living there
+        FlatNumber  string
+        HouseNumber string
+        Street      string
+        City        string
+        Country     string
+        Postcode    string
+    }
+    
+    type Person struct {
+        Title      string
+        GivenName  string
+        FamilyName string
+        Address    Address
+    }
 `
 
     person := must(morph.ParseStruct("example.go", source, "Person"))
@@ -703,4 +705,123 @@ func fromPtr[In, Out comparable](in *In, convert func(In) Out) Out {
     if in == nil { return zero }
     out := convert(*in)
     return out
+}
+
+func Example_repeated() {
+    source := `
+    package example
+
+    type Foo struct {
+        Value int
+    }
+`
+    fieldmapper := func (in morph.Field, emit func(out morph.Field)) {
+        out := in
+        out.Name = "Prefix_$_Suffix"
+        out.Value = "($.$ * 2)"
+        emit(out)
+    }
+
+    person := must(morph.ParseStruct("example.go", source, ""))
+    person = person.Map(
+        structmappers.Rename("Bar"),
+    ).MapFields(
+        fieldmapper,
+        fieldmapper,
+    )
+
+    fmt.Println(person)
+    fmt.Println(person.Converter("$FromTo$To(from $From) $To"))
+
+    // Output:
+}
+
+func Example_column() {
+
+    // Let's imagine some system for storing records about people, and
+    // relations between them:
+    source := `
+    package example
+
+    // Unique identifier for each Person
+    type PersonID int64 // if == 0, none
+
+    // A directional relation between two people e.g. A is a child of B,
+    // B is a parent of A, X considers themselves friends with Y, but Y does
+    // not reciprocate those feelings unless a relation exists in the other
+    // direction, too.
+    type RelationType byte
+    const (
+        Parent = RelationType(iota)
+        Child
+        Friend
+    )
+    type Relation struct {
+        RelationType RelationType
+        A, B PersonID // A -> B: directional
+    }
+
+    // A record for a single person, including all of their relations to
+    // other people.
+    type Person struct {
+        Name string
+        DateOfBirth time.Time
+        Relations []Relation
+    }
+
+    // A container for multiple Person records which we can look up by
+    // the PersonID.
+    type People map[PersonID]Person
+`
+
+    person := must(morph.ParseStruct("example.go", source, "Person"))
+
+    // We can do certain things, like quickly calculate the average age, or
+    // calculate the average number of children, or identify disjoint family
+    // trees, or write the records to disk in a way that compresses better, or
+    // better preparing graphics data to be sent to the GPU, by creating a
+    // representation that is "column-ordered". This is done by packing related
+    // fields closely together.
+    //
+    // This would look something like:
+    //
+    // type PeopleColumns struct {
+    //     Name []string // indexed
+    //     DateOfBirth []string // indexed
+    //     Relations []Relation // indexed, subslice of RelationsFlat
+    //     RelationsFlat []Relation // concatenated Person.Relations
+    // }
+
+    // Derive a new container type
+    columns := person.Map(
+        structmappers.Rename("Columns"),
+    ).MapFields(
+        // For Name, DateOfBirth, etc. generate a container slice
+        fieldmappers.Conditionally(
+            fieldmappers.FilterInv(fieldmappers.FilterSlices),
+            func (in morph.Field, emit func(morph.Field)) {
+                out := in
+                out.Type = "[]" + in.Type
+                // TODO out.Appender
+                emit(out)
+            },
+        ),
+        // For []Relations, generate a flat container slice and a subslice
+        fieldmappers.Conditionally(
+            fieldmappers.FilterSlices,
+            func (in morph.Field, emit func(morph.Field)) {
+                out := in
+                // TODO out.Appender
+                emit(out)
+
+                out = in
+                out.Name += "Flat"
+                // TODO out.Appender
+                emit(out)
+            },
+        ),
+    )
+
+    fmt.Println(columns)
+
 }

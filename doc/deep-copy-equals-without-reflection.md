@@ -180,8 +180,8 @@ This is trivial using [slices.EqualFunc]:
 
 ```go
 tree := must(morph.ParseStruct("test.go", source, "Tree"))
-sig := `TreesEqual[X comparable](x $[X], y $[X])`
-tree.Fields[1].Comparer = "slices.EqualFunc($a.$, $b.$, TreesEqual)"
+sig := `$ToEqual[X comparable](x $[X], y $[X])`
+tree.Fields[1].Comparer = "slices.EqualFunc($a.$, $b.$, $ToEqual)"
 ```
 
 ### Linked list with cycles
@@ -296,7 +296,8 @@ type Tree[X comparable] struct {
 }
 ```
 
-We can implement a "deep copy" quite simply:
+We can implement a "deep copy" quite simply by recursively applying the
+generated copy function to each child element:
 
 ```go
 tree := must(morph.ParseStruct("test.go", source, "Tree"))
@@ -403,3 +404,7 @@ func [X constraints.Ordered] LessThanFunc(as, bs []X, lt func(X, X)) bool {
 
 A "deep ordering" that also allows for cycles can be performed using the 
 visitor technique described in a previous section.
+
+---
+
+**Next:** [Automatically generate XML or JSON struct tags.](./auto-xml-json-struct-tags.md)

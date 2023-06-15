@@ -500,3 +500,8 @@ func (orange Orange) ToApple() Apple {
 [structmappers.Rename]: https://pkg.go.dev/github.com/tawesoft/morph/structmappers#Rename
 [fieldmappers package]: https://pkg.go.dev/github.com/tawesoft/morph/fieldmappers
 [fieldmappers.TimeToInt64]: https://pkg.go.dev/github.com/tawesoft/morph/fieldmappers#TimeToInt64
+
+
+---
+
+**Next:** [Deep copy and deep equals without runtime reflection.](./deep-copy-equals-without-reflection.md)
