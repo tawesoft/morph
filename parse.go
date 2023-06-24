@@ -171,10 +171,10 @@ func parseFunctionSignature(
         sig := FunctionSignature{
             Name:      funcDecl.Name.String(),
             Comment:   astText(funcDecl.Doc),
-            Type:      fields(funcDecl.Type.TypeParams),
-            Arguments: funcfields(funcDecl.Type.Params),
-            Returns:   funcfields(funcDecl.Type.Results),
-            Receiver:  fieldsOne(funcDecl.Recv),
+            Type:      args(funcDecl.Type.TypeParams),
+            Arguments: args(funcDecl.Type.Params),
+            Returns:   args(funcDecl.Type.Results),
+            Receiver:  internal.FirstOrDefault(args(funcDecl.Recv), Argument{}),
         }
         if filter(sig) {
             found = true
@@ -191,9 +191,9 @@ func parseFunctionSignature(
 
 // singleReturn returns the return type for a FunctionSignature and true when
 // there is exactly one return value, or (_, false) otherwise.
-func (fs FunctionSignature) singleReturn() (Field, bool) {
+func (fs FunctionSignature) singleReturn() (Argument, bool) {
     if len(fs.Returns) != 1 {
-        return Field{}, false
+        return Argument{}, false
     }
     return fs.Returns[0], true
 }
@@ -215,12 +215,6 @@ func astText(x interface{ Text() string }) string {
     if x == nil { return "" } else { return strings.TrimSpace(x.Text()) }
 }
 
-// fieldsOne returns the first field, if it exists.
-func fieldsOne(fs *ast.FieldList) Field {
-    if fs == nil { return Field{} }
-    return fields(fs)[0]
-}
-
 // fields converts an ast.FieldList into []Field. Returns nil for a nil input.
 //
 // A field with a type but no name is treated as a struct's embedded type with
@@ -229,12 +223,10 @@ func fields(fieldList *ast.FieldList) []Field {
     return astFieldListToFields(fieldList, true)
 }
 
-// funcfields converts an ast.FieldList into []Field. Returns nil for a nil
-// input.
-//
-// Unlike the fields function, a field with a type but no name is permitted.
-func funcfields(fieldList *ast.FieldList) []Field {
-    return astFieldListToFields(fieldList, false)
+// args converts an ast.FieldList into []Argument. Returns nil for a nil input.
+func args(fieldList *ast.FieldList) []Argument {
+    fs := astFieldListToFields(fieldList, false)
+    return internal.Map(fieldToArgument, fs)
 }
 
 func astFieldListToFields(fieldList *ast.FieldList, allowEmbedded bool) []Field {
@@ -274,17 +266,6 @@ func astFieldListToFields(fieldList *ast.FieldList, allowEmbedded bool) []Field 
                 Tag: tag,
                 Comment: comment,
             })
-        }
-    }
-    if len(result) == 0 { return nil }
-    return result
-}
-
-func filterFields(fields []Field, filter func(f Field) bool) []Field {
-    result := []Field{}
-    for _, f := range fields {
-        if filter(f) {
-            result = append(result, f)
         }
     }
     if len(result) == 0 { return nil }

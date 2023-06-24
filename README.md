@@ -11,12 +11,13 @@ functions in different ways.
 
 **Use cases for Morph**
 
+* "Compile-time reflection" for Go.
 * Serialisation and interoperability with other systems e.g. JSON, XML, SQL, 
   and binary.
 * Separation between data modeling layers.
 * Functional programming.
 * Graphics programming.
-* "Compile-time" reflection.
+* Statistics e.g. histograms and buckets.
 
 **Why use Morph?**
 
@@ -105,23 +106,45 @@ func OrangeToApple(from Orange) Apple {
 }
 ```
 
-### Comparing structs
+In fact, we can quickly generate any additional assignment, comparison, or 
+inspection functions we desire.
 
-Let's take the code for a recursive type:
+From sorting:
+
+```go
+// Fresher returns true if Orange "o" was picked more recently than Orange
+// "target". This can be used as an ordering to sort oranges by freshness or 
+// in order of those most in danger of going bad.
+func (o Orange) FresherThan(target Orange) bool { /* ... */ }
+```
+
+To serialization:
+
+```go
+// MarshalJSON converts an Orange to a JSON representation. It omits empty 
+// fields, converts all field names to lowercase, and means we don't 
+// have to pollute our struct type definition with tags.
+func (o Orange) MarshalJSON() ([]byte, error) { /* ... */ }
+```
+
+### Deep copy and deep equals without reflection
+
+Let's take the code for a recursive tree type:
 
 ```go
 type Tree struct {
     Value string
     Time time.Time
-    Children []Thing
+    Children []Tree
 }
 ```
 
-Morph can also generate custom copy, equals, ordering, deep copy, deep equals, 
+Morph can generate custom copy, equals, ordering, deep copy, deep equals, 
 and deep ordering functions -- all without using runtime reflection:
 
 ```go
-// TreesEqual returns true if two [Tree] values are equal.
+// TreesEqual returns true if two [Tree] values are equal, with the Value
+// string compared in a case-insensitive manner.
 func TreesEqual(a Tree, b Tree) bool {
     return strings.EqualFold(a.Value, b.Value) &&
         a.Time.Equals(b.Time) &&
@@ -130,24 +153,24 @@ func TreesEqual(a Tree, b Tree) bool {
 
 // Copy returns a copy of the [Tree] t.
 func (t *Tree) Copy() Tree {
+    // for a supplied slice application operator, `Map`.
     return Tree{
         Value: t.Value,
         Time: t.Time,
-        Children: append(Tree[X]{}, Map(Tree.Copy, t.Children))
+        Children: append([]Tree(nil), Map(Tree.Copy, t.Children))
     }
 }
 
 // TreesLessThan returns true if the first [Tree] is less than the second.
 func TreesLessThan(a Tree, b Tree) {
-    // for some specified notion of slice comparison, `LessThanFunc`.
+    // for a supplied slice comparison operator, `LessThanFunc`.
     return (a.Value < b.Value) ||
         b.Time.After(a) ||
         LessThanFunc(a.Children, b.Children, TreesLessThan)
 }
 ```
 
-This can also be extended to support recursive types that contain cycles. The
-tutorial goes into this in more detail.
+This can also be extended to support collections that contain cycles.
 
 
 ### Wrapping a function in different ways
@@ -158,12 +181,12 @@ and B, and write a generic higher-order function that takes this function as
 an input and returns a different function as a result.
 
 However, Go is limited in that it can't do this for arbitrary functions of
-any number of input arguments and any number of return values, without 
-having to create a new function for every combination of input and output 
+any number of input arguments and any number of return values. A developer
+has to create a separate function for every combination of input and output 
 counts.
 
 For example, there's no way to write a higher order function in native Go that
-automatically applies [context.TODO] to any possible function that takes a
+automatically applies [context.TODO] to every possible function that takes a
 [context.Context] for its first argument.
 
 We can use Morph to create and compose various automatic transformations of
@@ -193,7 +216,8 @@ func Halver(x float64) float64 { /* ... */ }
 func Divider(divisor float64) func (a float64) float64 { /* ... */ }
 
 // DividePromise returns a callback function (a promise) to call Divide(a, b) 
-// when called.
+// when called. The division is not performed until the returned promise is
+// called.
 func DividePromise(x, b float64) func () (float64, error) { /* ... */ }
 
 // DivideResult returns the result of Divide(a,b) collected into a Result 
@@ -206,6 +230,9 @@ Tutorials
 
 ### Structs
 
+*This section is to be read in order, as it incrementally introduces more
+advanced Morph features for manipulating structs.*
+
 1. [Apples To Oranges: mapping between Go structs with Morph.]
 2. [Deep copy and deep equals without runtime reflection.]
 3. [Automatically generate XML or JSON struct tags.]
@@ -213,14 +240,16 @@ Tutorials
 
 ### Functions
 
-* Wrapping and transforming Go functions with morph.
+*This section is to be read in order, as it incrementally introduces more
+advanced Morph features for manipulating functions.*
+
+* Wrapping and transforming Go functions with Morph.
 * Creating custom function wrappers.
 * Wrapping and transforming higher-order functions.
 
 ### General
 
-* Don't repeat yourself: the `$token` replacement reference.
-* Creating a morph build step with `go generate`.
+* Repeatable Morph code generation with `go generate`.
 
 [Apples To Oranges: mapping between Go structs with Morph.]: doc/mapping-go-structs-with-morph.md
 [Deep copy and deep equals without runtime reflection.]: doc/deep-copy-equals-without-reflection.md

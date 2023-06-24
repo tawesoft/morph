@@ -1,108 +1,13 @@
 package morph
 
 import (
-    "bytes"
     "errors"
     "fmt"
-    "go/ast"
-    "go/format"
-    "go/token"
     "strconv"
     "strings"
 
     "github.com/tawesoft/morph/internal"
-    "github.com/tawesoft/morph/tag"
 )
-
-func formatSource(source string) (string, error) {
-    s, err := format.Source([]byte(source))
-    if err != nil { return "", err }
-    return strings.TrimSpace(string(s)), nil
-}
-
-// simpleTypeExpr returns a type formatted as a string if the type is simple
-// (i.e. not a map, slice, channel etc.), with any type constraints removed.
-// Otherwise, returns (_, false).
-//
-// This is used to find the first FunctionSignature argument (or receiver) that
-// matches a given type.
-func simpleTypeExpr(x ast.Expr) (string, bool) {
-    var buf bytes.Buffer
-    ok := writeSimpleTypeExpr(&buf, x)
-    if !ok { return "", false }
-    s := buf.String()
-    // trim type constraints to ignore them
-    idx := strings.IndexByte(s, '[')
-    if idx > 0 {
-        s = s[0:idx]
-    }
-    return s, true
-}
-
-// writeSimpleTypeExpr is a shortened version of [types.ExprString] used by
-// [simpleTypeExpr] to format a type as a string, excluding several features
-// not needed for our purposes such as map types.
-func writeSimpleTypeExpr(buf *bytes.Buffer, x ast.Expr) bool {
-    unpackIndexExpr := func(n ast.Node) (x ast.Expr, lbrack token.Pos, indices []ast.Expr, rbrack token.Pos) {
-        switch e := n.(type) {
-        case *ast.IndexExpr:
-            return e.X, e.Lbrack, []ast.Expr{e.Index}, e.Rbrack
-        case *ast.IndexListExpr:
-            return e.X, e.Lbrack, e.Indices, e.Rbrack
-        }
-        return nil, token.NoPos, nil, token.NoPos
-    }
-
-    switch x := x.(type) {
-    default:
-        return false
-
-    case *ast.Ident:
-        buf.WriteString(x.Name)
-
-    case *ast.BasicLit:
-        buf.WriteString(x.Value)
-
-    case *ast.SelectorExpr:
-        ok := writeSimpleTypeExpr(buf, x.X)
-        if !ok {
-            return false
-        }
-        buf.WriteByte('.')
-        buf.WriteString(x.Sel.Name)
-
-    case *ast.IndexExpr, *ast.IndexListExpr:
-        ixX, _, ixIndices, _ := unpackIndexExpr(x)
-        ok := writeSimpleTypeExpr(buf, ixX)
-        if !ok {
-            return false
-        }
-        buf.WriteByte('[')
-        ok = writeSimpleTypeExprList(buf, ixIndices)
-        if !ok {
-            return false
-        }
-        buf.WriteByte(']')
-
-    case *ast.StarExpr:
-        buf.WriteByte('*')
-        return writeSimpleTypeExpr(buf, x.X)
-    }
-    return true
-}
-
-func writeSimpleTypeExprList(buf *bytes.Buffer, list []ast.Expr) bool {
-    for i, x := range list {
-        if i > 0 {
-            buf.WriteString(", ")
-        }
-        ok := writeSimpleTypeExpr(buf, x)
-        if !ok {
-            return false
-        }
-    }
-    return true
-}
 
 // String formats a function or method as Go source code.
 //
@@ -128,7 +33,7 @@ func (fn Function) String() string {
     sb.WriteString(fn.Body)
     sb.WriteString("\n}")
     source := sb.String()
-    out, err := formatSource(source)
+    out, err := internal.FormatSource(source)
     if err != nil {
         return fmt.Sprintf(
             "// error formatting function: %v\n// %s\n",
@@ -183,12 +88,10 @@ func (fs FunctionSignature) Value() (string, error) {
     }
     if fs.Receiver.Type != "" {
         // move reciever to first arg
-        args := append([]Field{}, fs.Receiver)
-        if len(fs.Arguments) > 0 {
-            args = append([]Field{}, fs.Arguments...)
-        }
+        args := []Argument{fs.Receiver}
+        args = append(args, fs.Arguments...)
         fs = fs.Copy()
-        fs.Receiver = Field{}
+        fs.Receiver = Argument{}
         fs.Arguments = args
     }
     fs.writeArgs(&sb)
@@ -218,203 +121,6 @@ func (fs FunctionSignature) writeReturns(sb *strings.Builder) {
         }
         sb.WriteRune(')')
     }
-}
-
-// Signature returns the Go type signature of a struct as a string, including
-// any generic type constraints, omitting the "type" and "struct" keywords.
-//
-// For example, returns a result like "Orange" or "Orange[X, Y any]".
-func (s Struct) Signature() string {
-    var sb strings.Builder
-    sb.WriteString(s.Name)
-    if len(s.TypeParams) > 0 {
-        sb.WriteRune('[')
-        for i, tp := range s.TypeParams {
-            if i > 0 {
-                sb.WriteString(", ")
-            }
-            sb.WriteString(tp.Name)
-            sb.WriteRune(' ')
-            sb.WriteString(tp.Type)
-        }
-        sb.WriteRune(']')
-    }
-    return sb.String()
-}
-
-// String returns a Go source code representation of the given struct.
-//
-// For example, returns a result like:
-//
-//     // Foo is a thing that bars.
-//     type Foo struct {
-//         Field Type `tag:"value"` // Comment
-//     }
-//
-func (s Struct) String() string {
-    var sb bytes.Buffer
-    if len(s.Comment) > 0 {
-        for _, line := range strings.Split(s.Comment, "\n") {
-            sb.WriteString(fmt.Sprintf("// %s\n", line))
-        }
-    }
-    sb.WriteString("type ")
-    sb.WriteString(s.Signature())
-    sb.WriteString(" struct {\n")
-
-    for _, field := range s.Fields {
-        multilineComment := strings.ContainsRune(field.Comment, '\n')
-        if multilineComment {
-            for _, line := range strings.Split(field.Comment, "\n") {
-                sb.WriteString("\t// ")
-                sb.WriteString(line)
-                sb.WriteRune('\n')
-            }
-        }
-
-        sb.WriteString("\t")
-        sb.WriteString(field.Name)
-        sb.WriteRune(' ')
-        sb.WriteString(field.Type)
-        if len(field.Tag) > 0 {
-            sb.WriteRune(' ')
-            sb.WriteString(tag.Quote(field.Tag))
-        }
-        if (!multilineComment) && (len(field.Comment) > 0) {
-            sb.WriteString(" // ")
-            sb.WriteString(field.Comment)
-        }
-        sb.WriteRune('\n')
-    }
-
-    sb.WriteString("}")
-    bs := sb.Bytes()
-    out, err := format.Source(bs)
-    if err != nil {
-        panic(fmt.Errorf(
-            "error formatting struct %q: %w",
-            string(bs), err,
-        ))
-    }
-    return string(out)
-}
-
-// formatStructConverter formats the function body created by the
-// [Struct.Converter] method.
-func formatStructConverter(returnType string, assignments []Field) string {
-    // source code representation
-    var sb bytes.Buffer
-    sb.WriteString("\treturn ")
-
-    // For type *Foo, return &Foo
-    if strings.HasPrefix(returnType, "*") {
-        sb.WriteRune('&')
-        sb.WriteString(returnType[1:])
-    } else {
-        sb.WriteString(returnType)
-    }
-
-    sb.WriteString("{\n")
-    for _, asgn := range assignments {
-        if asgn.Value == "" {
-            // TODO just assign with =
-            sb.WriteString(fmt.Sprintf("\t\t// %s is the zero value.\n", asgn.Name))
-        } else if asgn.Value == "nil" {
-            sb.WriteString(fmt.Sprintf("\t\t// %s is the zero value.\n", asgn.Name))
-        } else {
-            sb.WriteString(fmt.Sprintf("\t\t%s: %s,\n", asgn.Name, asgn.Value))
-        }
-    }
-    sb.WriteString("\t}")
-    return sb.String()
-}
-
-// formatStructComparer formats the function body created by the
-// [Struct.Comparer] method.
-func formatStructComparer(arg1Name, arg2Name string, fs []Field) string {
-    // source code representation
-    var sb bytes.Buffer
-
-    for i, f := range fs {
-        sb.WriteString(fmt.Sprintf("\t// %s.%s == %s.%s\n",
-            arg1Name, f.Name, arg2Name, f.Name))
-        if f.Comparer == "" {
-            sb.WriteString(fmt.Sprintf("\t_cmp%d := (%s.%s == %s.%s)\n\n",
-                i, arg1Name, f.Name, arg2Name, f.Name))
-        } else {
-            sb.WriteString(fmt.Sprintf("\t_cmp%d := bool(%s)\n\n", i, f.Comparer))
-        }
-    }
-
-    if len(fs) == 0 {
-        sb.WriteString("return true\n")
-    } else {
-        sb.WriteString("return (")
-        for i := 0; i < len(fs); i++ {
-            if i > 0 { sb.WriteString(" && ") }
-            sb.WriteString(fmt.Sprintf("_cmp%d", i))
-        }
-        sb.WriteString(")")
-    }
-
-    return sb.String()
-}
-
-// formatStructCopier formats the function body created by the
-// [Struct.Copier] method.
-func formatStructCopier(inputName string, outputName string, returnType string, fs []Field) string {
-    // source code representation
-    var sb bytes.Buffer
-
-    // Remove pointer from temporary output type.
-    outType := returnType
-    if strings.HasPrefix(returnType, "*") {
-        outType = outType[1:]
-    }
-    sb.WriteString(fmt.Sprintf("\tvar %s %s\n\n", outputName, returnType))
-
-    for _, f := range fs {
-        sb.WriteString(fmt.Sprintf("\t// %s.%s = %s.%s\n",
-            outputName, f.Name, inputName, f.Name))
-        if f.Copier == "" {
-            sb.WriteString(fmt.Sprintf("\t%s.%s = %s.%s\n\n",
-                outputName, f.Name, inputName, f.Name))
-        } else {
-            sb.WriteString(fmt.Sprintf("\t%s\n\n", f.Copier))
-        }
-    }
-
-
-    // Restore pointer
-    sb.WriteString("\treturn ")
-    if strings.HasPrefix(returnType, "*") {
-        sb.WriteRune('&')
-    }
-    sb.WriteString(outputName)
-
-    return sb.String()
-}
-
-// formatStructOrderer formats the function body created by the
-// [Struct.Orderer] method.
-func formatStructOrderer(arg1Name, arg2Name string, fs []Field) string {
-    // source code representation
-    var sb bytes.Buffer
-
-    for i, f := range fs {
-        sb.WriteString(fmt.Sprintf("\t// %s.%s < %s.%s\n",
-            arg1Name, f.Name, arg2Name, f.Name))
-        if f.Orderer == "" {
-            sb.WriteString(fmt.Sprintf("\t_cmp%d := (%s.%s < %s.%s)\n",
-                i, arg1Name, f.Name, arg2Name, f.Name))
-        } else {
-            sb.WriteString(fmt.Sprintf("\t_cmp%d := bool(%s)\n", i, f.Orderer))
-        }
-        sb.WriteString("if _cmp { return true }\n\n")
-    }
-
-    sb.WriteString("return false\n")
-    return sb.String()
 }
 
 type FunctionError struct {
@@ -499,7 +205,7 @@ func (cr *captureResult) Capture(Type string) {
     cr.Types = append(cr.Types, Type)
 }
 
-func tokenReplacerForArgs(referenced internal.Set[int], inputs []Field) internal.TokenReplacer {
+func tokenReplacerForArgs(referenced internal.Set[int], inputs []Argument) internal.TokenReplacer {
     return internal.TokenReplacer{
         ByIndex: func(i int) (string, bool) {
             if (i < 0) || (i >= len(inputs)) { return "", false }
@@ -629,7 +335,7 @@ func (cr captureResult) writeCapture(sb *strings.Builder, prefix string, i int) 
     sb.WriteString("\n")
 }
 
-func captureArgs(args []Field) []captureResult {
+func captureArgs(args []Argument) []captureResult {
     var results []captureResult
     for _, arg := range args {
         result := captureResult{Name: arg.Name}
@@ -752,7 +458,7 @@ func (w WrappedFunction) Format() (string, error) {
 }
 
 // bind implements [FunctionSignature.Bind] and [Function.Bind].
-func bind(fs FunctionSignature, name string, xargs []Field, inline *Function) (Function, error) {
+func ___bind(fs FunctionSignature, name string, xargs []Field, inline *Function) (Function, error) {
     // Note, implementation is suboptimal (n^2) but shouldn't matter for
     // small number of args.
 
@@ -762,16 +468,19 @@ func bind(fs FunctionSignature, name string, xargs []Field, inline *Function) (F
     }
     */
 
-    match := func(f Field, name string, Type string) bool {
+    match := func(f Argument, name string, Type string) bool {
         if (f.Name != name) { return false }
         if (Type != "") && (f.Type != Type) { return false }
         return true
     }
-    matchAny := func(f Field) bool {
+    matchAny := func(a Argument) bool {
         for _, arg := range xargs {
-            if match(f, arg.Name, arg.Type) { return true }
+            if match(a, arg.Name, arg.Type) { return true }
         }
         return false
+    }
+    matchAnyInverse := func(a Argument) bool {
+        return !matchAny(a)
     }
 
     inner := fs.Copy()
@@ -800,14 +509,10 @@ func bind(fs FunctionSignature, name string, xargs []Field, inline *Function) (F
         outer.Comment = cb.String()
     }
 
-    inner.Arguments = filterFields(inner.Arguments, func(f Field) bool {
-        return !matchAny(f)
-    })
-    outer.Arguments = filterFields(outer.Arguments, func(f Field) bool {
-        return matchAny(f)
-    })
+    inner.Arguments = internal.Filter(matchAnyInverse, inner.Arguments)
+    outer.Arguments = internal.Filter(matchAny,        outer.Arguments)
 
-    outer.Returns = []Field{{
+    outer.Returns = []Argument{{
         Type: "func" + internal.Must(inner.Value()),
     }}
 

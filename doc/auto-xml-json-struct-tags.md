@@ -416,6 +416,9 @@ func (p *Person) UnmarshalJSON(b []byte) error {
 }
 ```
 
+We shall see, in the later section about using morph on Functions, how even
+these functions can be generated automatically.
+
 ---
 
 **Next:** [Mapping to column-orientated data types.](./column-orientated-structs.md)

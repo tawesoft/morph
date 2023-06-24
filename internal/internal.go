@@ -2,17 +2,94 @@ package internal
 
 import (
     "go/format"
+    "os"
+    "os/exec"
+    "path"
     "strings"
+    "testing"
     "unicode"
 
     "github.com/tawesoft/morph/tag"
 )
 
+// TestCompileAndRun compiles and runs a Go program (using "go run") and
+// verifies that:
+//
+//   * it compiles successfully
+//   * it generates a normal exit code
+//   * it doesn't write to stderr
+//   * captures the writes to stdout
+//   * asserts that the provided "expected" func returns a nil error when
+//     called with the captured input.
+//
+// WARNING: this function can compile and run arbitrary Go code. This function
+// MUST NOT be used on untrusted sources.
+func TestCompileAndRun(t *testing.T, source string, expected func(stdout string) error) {
+    dir := t.TempDir()
+    dest := path.Join(dir, "generated-for-morph-test.go")
+
+    err := os.WriteFile(dest, []byte(source), 0600)
+    if err != nil {
+        t.Fatalf("could not write temporary file %q", dest)
+    }
+
+    cmd := exec.Command("go", "run", dest)
+    var stdout, stderr strings.Builder
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+
+    err = cmd.Run()
+    t.Logf("source: %s", source)
+    if (err != nil) {
+        t.Fatalf("generated code failed to compile: %v", err)
+    }
+
+    sout, serr := stdout.String(), stderr.String()
+    if sout != "" {
+        t.Logf("stdout: %s", sout)
+    }
+    if serr != "" {
+        t.Logf("stderr: %s", serr)
+    }
+    if err := expected(sout); err != nil {
+        t.Fatalf("unexpected result: %v", err)
+    }
+}
+
+// FirstOrDefault returns the first value in the slice, or, if empty, the default value
+func FirstOrDefault[X comparable](xs []X, defaultIfMissing X) X {
+    if len(xs) >= 1 {
+        return xs[0]
+    } else {
+        return defaultIfMissing
+    }
+}
+
+func Filter[X any](filter func(x X) bool, xs []X) []X {
+    var result []X
+    for _, x := range xs {
+        if filter(x) {
+            result = append(result, x)
+        }
+    }
+    return result
+}
+
+// RecursiveCopySlice deeply copies a slice of elements that each, in turn,
+// must be copied using their own Copy method.
+func RecursiveCopySlice[X interface{Copy() X}](xs []X) []X {
+    results := []X(nil)
+    for _, x := range xs {
+        results = append(results, x.Copy())
+    }
+    return results
+}
+
 // RewriteSignatureString performs the special '$' replacement in a function
 // signature specified as a string.
 //
-// TODO ignore "$" inside string literal and use tokenReplacer instead
-//   note -- pass through other occurences of "$" unchanged
+// TODO use tokenReplacer instead
+// Deprecated.
 func RewriteSignatureString(sig string, from string, to string) string {
     if strings.HasPrefix(from, "*") { from = from[1:] }
     if strings.HasPrefix(to, "*") { to = to[1:] }
@@ -65,12 +142,36 @@ func IsAsciiNumber(x rune) bool {
     return (x >= '0') && (x <= '9')
 }
 
-func IsGoIdentLetter(x rune) bool {
+func IsGoIdentStarter(x rune) bool {
     return x == '_' || unicode.IsLetter(x)
+}
+
+func IsGoIdent(x rune) bool {
+    return x == '_' || unicode.IsLetter(x) || unicode.IsDigit(x)
+}
+
+func IsGoIdentIdx(x rune, idx int) bool {
+    return IsGoIdentStarter(x) || ((idx > 0) && unicode.IsDigit(x))
+}
+
+func First[T any](xs []T) (T, bool) {
+    var zero T
+    if len(xs) == 0 { return zero, false }
+    return xs[0], true
+}
+
+func Last[T any](xs []T) (T, bool) {
+    var zero T
+    if len(xs) == 0 { return zero, false }
+    return xs[len(xs)-1], true
 }
 
 func Must[T any](result T, err error) T {
     if err == nil { return result } else { panic(err) }
+}
+
+func Assert(err error) {
+    if err != nil { panic(err) }
 }
 
 func Map[X, Y any](fn func(x X) Y, xs []X) []Y {
@@ -109,8 +210,10 @@ func AppendTags(t string, tags ... string) string {
     return strings.Join(elements, " ")
 }
 
-func FormatSource(s string) string {
-    return strings.TrimSpace(string(Must(format.Source([]byte(s)))))
+func FormatSource(source string) (string, error) {
+    s, err := format.Source([]byte(source))
+    if err != nil { return "", err }
+    return strings.TrimSpace(string(s)), nil
 }
 
 func RemoveElementByIndex[X any](idx int, xs []X) []X {
@@ -123,109 +226,6 @@ func RemoveElementByIndex[X any](idx int, xs []X) []X {
     return result
 }
 
-// ParseTypeList parses a comma-separated list of types, including bracketed
-// tuples of types.
-//
-// Bracketed tuples are not recursively passed by this function but are simply
-// indicated by calling visit on the entire tuple with "more" as true when
-// calling the visit function.
-//
-// For example:
-//
-//     ParseTypeList(0, "a, (b, (c, d)), func (e, f)", visit)
-//
-// Calls visit with these arguments:
-//
-//     visit("a", false)
-//     visit("b, (c, d)", true)
-//     visit("func (e, f)", false)
-//
-// Returns false on parse error such as unpaired brackets.
-func ParseTypeList(types string, visit func(x string, more bool) bool) bool {
-    types += "," // simplify end of string handling
-    bracketDepth := 0
-    token := make([]rune, 0)
-    ok := true
-
-    for _, c := range types {
-        // skip leading space
-        if (len(token) == 0) && runeIsHSpace(c) {
-            continue
-        }
-        token = append(token, c)
-
-        if c == '(' {
-            bracketDepth++
-        } else if c == ')' {
-            bracketDepth--
-            if bracketDepth < 0 {
-                return false
-            }
-        } else if (c == ',') && (bracketDepth == 0) {
-            if len(token) == 0 { return false }
-            x := strings.TrimSpace(string(token[0:len(token)-1]))
-            if len(x) == 0 { return false }
-
-            if (x[0] == '(') && (x[len(x)-1] == ')') {
-                ok = ok && visit(strings.TrimSpace(x[1:len(x)-1]), true)
-            } else {
-                ok = ok && visit(x, false)
-            }
-            token = token[0:0]
-        }
-    }
-    return ok && (bracketDepth == 0)
-}
-
 func runeIsHSpace(c rune) bool {
     return (c == '\t') || (c == ' ')
-}
-
-// ParseTypeListRecursive parses a comma-separated list of types, including
-// bracketed tuples of types.
-//
-// Bracketed tuples are recursively passed by this function.
-//
-// For example:
-//
-//     ParseTypeList(0, "a, (b, (c, d)), func (e, f)", visit)
-//
-// Calls visit with these arguments:
-//
-//     visit(0, "a")
-//     visit(1, "b")
-//     visit(2, "c")
-//     visit(2, "d")
-//     visit(0, "func (e, f)")
-//
-// Returns false on parse error such as unpaired brackets.
-func ParseTypeListRecursive(types string, visit func(depth int, x string) bool) bool {
-    ok := true
-
-    visit_flat := func(x string, more bool) bool {
-        if more {
-            visit2 := func(depth int, x string) bool {
-                ok = ok && visit(depth + 1, x)
-                return ok
-            }
-            ok = ok && ParseTypeListRecursive(x, visit2)
-        } else {
-            ok = ok && visit(0, x)
-        }
-        return ok
-    }
-
-    return ok && ParseTypeList(types, visit_flat)
-}
-
-// SplitTypeTuple parses flat comma-separated tuple of types, such as
-// "string, error", and returns each token as a string.
-func SplitTypeTuple(types string) ([]string, bool) {
-    var results []string
-    ok := ParseTypeList(types, func(x string, more bool) bool {
-        results = append(results, x)
-        return more == false
-    })
-    if len(results) == 0 { return nil, false }
-    return results, ok
 }

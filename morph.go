@@ -18,8 +18,6 @@
 package morph
 
 import (
-    "fmt"
-    "go/parser"
     "strings"
 
     "github.com/tawesoft/morph/internal"
@@ -30,58 +28,27 @@ import (
 type FunctionSignature struct {
     Comment   string
     Name      string
-    Type      []Field
-    Arguments []Field
-    Returns   []Field
-    Receiver  Field
+    Type      []Argument
+    Arguments []Argument
+    Returns   []Argument
+    Receiver  Argument
 }
 
 // Copy returns a (deep) copy of a FunctionSignature, ensuring that slices
 // aren't aliased.
 func (fs FunctionSignature) Copy() FunctionSignature {
-    var args, returns, types []Field
-
-    if len(fs.Type) > 0 {
-        types = append([]Field{}, fs.Type...)
-    }
-    if len(fs.Arguments) > 0 {
-        args = append([]Field{}, fs.Arguments...)
-    }
-    if len(fs.Returns) > 0 {
-        returns = append([]Field{}, fs.Returns...)
-    }
-
-    return FunctionSignature{
-        Comment:   fs.Comment,
-        Name:      fs.Name,
-        Type:      types,
-        Arguments: args,
-        Returns:   returns,
-        Receiver:  fs.Receiver,
-    }
+    out := fs
+    out.Type      = append([]Argument(nil), fs.Type...)
+    out.Arguments = append([]Argument(nil), fs.Arguments...)
+    out.Returns   = append([]Argument(nil), fs.Returns...)
+    return out
 }
 
-// matchSimpleType returns true if a field's type is a match for the simple
-// type specified, which is a "simple" type (i.e. not a map, channel, slice,
-// etc.). All type constraints on the field are ignored, and the type is still
-// a match if the field's type is a pointer of the specified type.
-func (f Field) matchSimpleType(Type string) bool {
-    x, err := parser.ParseExpr(f.Type)
-    if err != nil {
-        return false
-    }
-    s, ok := simpleTypeExpr(x)
-    if !ok {
-        return false
-    }
-    return (s == Type) || (s == "*"+Type)
-}
-
-// Inputs returns a slice containing a Field for each input specified by the
-// function signature, including the method reciever (if any) as the first
-// argument).
-func (fs FunctionSignature) Inputs() []Field {
-    var args []Field
+// Inputs returns a slice containing a Argument for each input specified by the
+// function signature, including the method receiver (if any) as the first
+// argument.
+func (fs FunctionSignature) Inputs() []Argument {
+    var args []Argument
     if fs.Receiver.Type != "" {
         args = append(args, fs.Receiver)
     }
@@ -89,36 +56,33 @@ func (fs FunctionSignature) Inputs() []Field {
     return args
 }
 
-
-// fieldTypeFilterer returns a function that returns true for any Field whose
-// type is a simple type that matches the provided Type.
-func fieldTypeFilterer(Type string) func (f Field) bool {
-    return func(f Field) bool {
-        return f.matchSimpleType(Type)
-    }
-}
-
+/*
 // matchingInput searches the function receiver and input arguments, in order,
 // for the first instance of an input matching the provided type, or a pointer
-// of the provided type. Type constraints are ignored.
-func (fs FunctionSignature) matchingInput(Type string) (match Field, found bool) {
-    args := filterFields(fs.Inputs(), fieldTypeFilterer(Type))
+// of the provided type. The provided Type must be a simple type, and type
+// constraints are ignored.
+func (fs FunctionSignature) matchingInput(Type string) (match Argument, found bool) {
+    args := filterArguments(fs.Inputs(), argumentTypeFilterer(Type))
     if len(args) < 1 {
-        return Field{}, false
+        found = false
+        return
     }
     return args[0], true // first one wins
 }
 
 // matchingInputs searches the function receiver and input arguments, in order,
 // for the first two instances of an input matching the provided type, or a
-// pointer of the provided type. Type constraints are ignored.
-func (fs FunctionSignature) matchingInputs(Type string) (match1 Field, match2 Field, found bool) {
-    args := filterFields(fs.Inputs(), fieldTypeFilterer(Type))
+// pointer of the provided type. The provided Type must be a simple type, and
+// type constraints are ignored.
+func (fs FunctionSignature) matchingInputs(Type string) (match1 Argument, match2 Argument, found bool) {
+    args := filterArguments(fs.Inputs(), argumentTypeFilterer(Type))
     if len(args) < 2 {
-        return Field{}, Field{}, false
+        found = false
+        return
     }
     return args[0], args[1], true // first two win
 }
+*/
 
 // Function contains a parsed function signature and the raw source code of
 // its body, excluding the enclosing "{" and "}" braces.
@@ -127,124 +91,124 @@ type Function struct {
     Body string
 }
 
-// Field represents a name and type, such as a field in a struct or a type
-// constraint, or a function argument like "in []Things".
+// Argument represents a named and typed argument e.g. a type constraint or
+// an argument to a function.
+type Argument struct {
+    Name string
+    Type string
+}
+
+func fieldToArgument(f Field) Argument {
+    return Argument{
+        Name: f.Name,
+        Type: f.Type,
+    }
+}
+
+// matchSimpleType returns true if an argument matches the provided simple
+// type, or matches a pointer to the provided simple type, ignoring type
+// constraints.
+func (a Argument) matchSimpleType(Type string) bool {
+    return internal.MatchSimpleType(a.Type, Type)
+}
+
+// argumentTypeFilterer returns a function that returns true for any Argument
+// whose type is a simple type that matches the provided Type.
+func argumentTypeFilterer(Type string) func (f Argument) bool {
+    return func(a Argument) bool {
+        return a.matchSimpleType(Type)
+    }
+}
+
+// Variable represents a named and typed variable with a value.
+type Variable struct {
+    Name  string
+    Type  string
+    Value string
+}
+
+// Field represents a named and typed field in a struct, with optional struct
+// tags, comments, and various "expressions" describing operations on fields
+// of that type.
 //
-// Fields should be considered readonly, except inside a FieldMapper or when
-// working on a copy.
-//
-// When appearing in a struct, a field may also contain a struct tag,
-// comments, and several expressions encoded as strings.
+// Fields should be considered readonly, except inside a FieldMapper.
 //
 // The Tag, if any, does not include surrounding quote marks, and the Comment,
 // if any, does not have a trailing new line or comment characters such as
-// a starting "/*", an ending "*/", or "//" at the start of each line.
+// "//", a starting "/*", or an ending "*/".
 //
-// These expressions include:
-//
-// * A converter assignment expression for mapping a field value from a source
-//   struct to a destination struct of a different type. An empty string means
-//   assign the source field unchanged.
-//
-// * A comparer boolean expression for comparing two fields of the same type.
-//   An empty string means compare with "==".
-//
-// * A copier assignment expression for mapping a field value from a source
-//   struct to a destination struct of the same type. An empty string means
-//   assign the source field unchanged.
-//
-// * An orderer boolean expression for defining a sorting order by implementing
-//   the concept of "less than". An empty string means use "<".
-//
-// * Any number of custom-defined expressions which are either boolean
-//   expressions (like comparer and orderer), assignments (like converter
-//   and copier), or void expressions that operate on a field on a single
-//   struct but do not generate any value to be assigned or compared.
-//
-// In a boolean expression, the value "true" always compares true. The special
-// value "skip" is also always treated as true.
-//
-// In an assignment expression, the special value "zero" means assign the
-// zero value to the destination field, and the special value "skip" means
-// don't assign any value to the destination field (this distinction matters
-// if the output is a destination passed by reference instead of a return
-// value).
-//
-// In a void expression, the empty string means apply the defined default
-// expression. The special value "skip" means don't apply any expression to
-// the field.
-//
-// Each expression can contain "$-token" replacements that are replaced with
-// a computed string:
-//
-// * "$from", "$From", "$FROM" are replaced with the name of a struct type
-//   before it was renamed (this reads the [Struct.From] field). "$from" has
-//   the first letter always changed to lower case. "$FROM" has the first letter
-//   always changed to upper case.
-//
-// * "$to", "$To", "$TO" are replaced with the name of the struct type (this
-//   reads the [Struct.Name] field). "$to" has the first letter always changed
-//   to lower case. "$TO" has the first letter always changed to uppercase.
-//
-// * "$a" and "$b", when followed by a dot, are replaced inside boolean
-//   expressions with the name of two input arguments.
-//
-// * "$self" alone, when followed by a dot, is replaced inside a void
-//    expression with the name of an input argument.
-//
-// * "$src" and "$dest", when followed by a dot, are replaced inside assignment
-//   expressions with the name of input and output arguments.
-//
-// * "$" alone, when following "$a", "$b", "$src", "$dest", or "$self" plus a
-//   dot, is replaced with the name of the field on the appropriate argument.
-//
-// Additionally, in a [FieldMapper], in Name or Type, "$" (alone) is replaced
-// with the name or type of the input field, respectively. Unlike the other
-// token replacements, this one happens immediately upon applying a field
-// mapper.
-//
-// A field appearing in a struct may also define a reverse function, which
-// is a [FieldMapper] that performs the opposite of a FieldMapper applied to
-// the field. It is not necessary that the result of applying a reverse
+// A field appearing in a struct may also define a reverse function, which is a
+// [FieldMapper] that performs the opposite conversion of a FieldMapper applied
+// to the field. It is not necessary that the result of applying a reverse
 // function is itself reversible. Not all mappings are reversible, so this may
-// be nil.
+// be set to nil.
 //
-// When creating a reverse function, care should be taken to not overwrite
-// a field's existing reverse function. This can be achieved by composing the
-// two functions with the Compose function in the fieldmappers sub package, e.g.
-// `myNewField.Reverse = fieldmappers.Compose(newfunc, myOldField.Reverse))`
+// For example, if a FieldMapper applies a transformation with
+//     Converter == "$dest.$ = $src.$ * 2"
+// Then the reverse function should apply a transformation with
+//     Converter == "$dest.$ = $src.$ / 2"
+//
+// When creating a reverse function, care should be taken to not overwrite a
+// field's existing reverse function. This can be achieved by composing the two
+// functions with the Compose function in the fieldmappers sub package, for
+// example:
+//     myNewField.Reverse = fieldmappers.Compose(newfunc, myOldField.Reverse))
 // (this is safe even when myOldField.Reverse is nil).
 type Field struct {
-    Name     string
-    Type     string
+    Name      string
+    Type      string
+    Tag       string
+    Comment   string
 
-    // For fields appearing in structs only...
-    Tag      string
-    Comment  string
-    Reverse  FieldMapper
-
-    // Expressions (also appearing in structs only)...
-    Value     string // TODO remove
-    Converter string
-    Comparer  string
-    Orderer   string
-    Copier    string
-    Custom FieldExpression
+    // For fields appearing in structs that have been mapped only...
+    Reverse   FieldMapper
+    Converter ConverterFieldExpression
+    Comparer  ComparerFieldExpression
+    Copier    CopierFieldExpression
+    Orderer   OrdererFieldExpression
+    Zeroer    ZeroerFieldExpression
+    Custom    []FieldExpression
 }
 
-type FieldExpression interface {
-    fieldExpression()
+// Copy returns a (deep) copy of a Field, ensuring that slices aren't aliased.
+func (f Field) Copy() Field {
+    out := f
+    out.Custom = append([]FieldExpression(nil), f.Custom...)
+    return out
 }
 
-type BooleanFieldExpression struct {
-    Default string // e.g. "
+// matchSimpleType returns true if a field matches the provided simple
+// type, or matches a pointer to the provided simple type, ignoring type
+// constraints.
+func (f Field) matchSimpleType(Type string) bool {
+    return internal.MatchSimpleType(f.Type, Type)
 }
-func (BooleanFieldExpression) fieldExpression() {}
 
-// AppendTags returns a new Field with the given tags appended to the field's
-// existing tags (if any), joined with a space separator, as is the convention.
+func filterFields(fields []Field, filter func(f Field) bool) []Field {
+    var result []Field
+    for _, f := range fields {
+        if filter(f) {
+            result = append(result, f.Copy())
+        }
+    }
+    return result
+}
+
+/*
+// fieldTypeFilterer returns a function that returns true for any Field whose
+// type is a simple type that matches the provided Type.
+func fieldTypeFilterer(Type string) func (f Field) bool {
+    return func(f Field) bool {
+        return f.matchSimpleType(Type)
+    }
+}
+*/
+
+// AppendTags appends a tag to the field's existing tags (if any), joined with
+// a space separator, as is the convention.
 //
-// Note that this does not modify the field the method is called on.
+// Note that this modifies the field in-place, so should be done on a copy
+// where appropriate.
 //
 // Each tag in the tags list to be appended should be a single key:value pair.
 //
@@ -253,33 +217,246 @@ func (BooleanFieldExpression) fieldExpression() {}
 //
 // If any tags do not have the conventional format, the value returned
 // is unspecified.
-func (f Field) AppendTags(tags ... string) Field {
+func (f *Field) AppendTags(tags ... string) {
     f.Tag = internal.AppendTags(f.Tag, tags...)
-    return f
 }
 
-// AppendComments returns a new Field with the comments appended to the field's
-// existing comment string (if any), joined with a newline separator.
+// AppendComments appends a comment to the field's existing comment string (if
+// any), joined with a newline separator.
 //
-// Note that this does not modify the field the method is called on.
-func (f Field) AppendComments(comments ... string) Field {
+// Note that this modifies the field in-place, so should be done on a copy
+// where appropriate.
+func (f *Field) AppendComments(comments ... string) {
     f.Comment = internal.AppendComments(f.Comment, comments...)
-    return f
 }
 
-// Rewrite performs the special '$' replacement described by FieldMapper.
+// Rewrite performs the special '$' replacement of a field's Name and Type
+// described by FieldMapper.
 //
-// Note that a remaining "$." in a field value remains present and is not
-// rewritten until generating a function, as it requires the name of a function
-// argument to be known.
-//
-// TODO ignore $ inside string or rune literals
-func (f Field) Rewrite(input Field) Field {
+// Note that this modifies the field in-place, so should be done on a copy
+// where appropriate.
+func (f *Field) Rewrite(input Field) {
+    // naive strings.Replace is fine here because "$" cannot appear in a
+    // valid identifier.
     f.Name  = strings.ReplaceAll(f.Name, "$", input.Name)
     f.Type  = strings.ReplaceAll(f.Type, "$", input.Type)
-    f.Value = strings.ReplaceAll(f.Value, ".$", "."+input.Name)
-    return f
 }
+
+// SetCustomExpression adds a custom field expression to a field's slice of
+// custom expressions or, if one with that name already exists, replaces that
+// expression.
+func (f *Field) SetCustomExpression(expression FieldExpression) {
+    for i, x := range f.Custom {
+        if x.Type.Name == expression.Type.Name {
+            f.Custom[i] = expression
+            return
+        }
+    }
+    f.Custom = append(f.Custom, expression)
+}
+
+// GetCustomExpression retrieves a named custom field expression from a field's
+// slice of custom expressions, or nil if not found.
+func (f Field) GetCustomExpression(name string) *FieldExpression {
+    for i, x := range f.Custom {
+        if x.Type.Name == name {
+            return &f.Custom[i]
+        }
+    }
+    return nil
+}
+
+// FieldExpression is an instruction describing how to assign, compare, or
+// inspect, or perform some other operation on a field or fields.
+//
+// Most users will just call [Struct.Converter], [Struct.Comparer], etc.
+// and do not need to use this unless using Morph to make their own custom
+// function generators.
+//
+// A field expression's Type defines what the expression does e.g. compare,
+// convert, etc.
+//
+// An expression may apply to either a single field on one struct value, or on
+// two matching fields on two struct values, depending on the Type.
+//
+// Note one important limitation: expressions of the same Type overwrite each
+// other and do not nest. Two field mappings are incompatible if they touch
+// the same expressions on the same fields. When making multiple incompatible
+// mappings, you must create intermediate temporary struct types.
+//
+// A field expression's Pattern defines how a field expression of that Type is
+// applied to a specific field or fields.
+//
+// These are either boolean comparison expressions (like [Field.Comparer] and
+// [Field.Orderer]) that return true or false, value assignment expressions
+// (like [Field.Converter] and [Field.Copier]) which assign values to a
+// destination value, or void inspection expressions that don't return
+// anything (but may panic). Fields are inspected in the order they appear in
+// a source struct.
+//
+// In any expression, if the pattern is the special value "skip", then
+// it means explicitly ignore that field for expressions of that type
+// instead of applying the default pattern for that expression type.
+//
+// A field expression's pattern may contain "$-token" replacements that are
+// replaced with a computed string when generating the source code for a new
+// function:
+//
+//  * "$a" and "$b" are replaced inside two-target boolean expressions with the
+//    name of two input struct value arguments.
+//
+//  * "$src" and "$dest" are replaced inside two-target value assignment
+//    expressions with the name of the input and output struct value arguments.
+//
+//  * "$self" is replaced inside a single-target expression with the name of
+//    the single target struct value argument.
+//
+//  * "$this" is replaced inside a single-target boolean or void expression
+//    with the qualified field name on the single input for the field currently
+//    being mapped.
+//
+//  * The tokens "$a", "$b", "$src", "$dest", and "$self" may be followed by a
+//    dot and another token specifying a named field (e.g. "$src.Foo"), which
+//    is then replaced with a qualified field name on the appropriate target
+//    (e.g. "myStruct.Foo").
+//
+//  * Alternatively, instead of a named field, the tokens "$a", "$b", "$src",
+//    "$dest", and "$self" may instead be followed by a dot and "$" when not
+//    followed by any Go identifier (e.g. "$src.$.foo" is okay, but "$src.$foo"
+//    is not), which is then replaced with the qualified field name on the
+//    appropriate target for the source field currently being mapped.
+//
+// Additionally:
+//
+//  * Any token that would otherwise be replaced by any previous pattern may
+//    also be followed by a dot and "$type", in which case they are instead
+//    replaced with the type of the referenced struct value or field value.
+//
+//  * Any token that would otherwise be replaced by any previous pattern,
+//    including with the ".$type" suffix, may also be followed by a dot and
+//    "$title" or "$untitle", in which case the replacement has the first
+//    character forced into an uppercase or lowercase variant, respectively.
+//
+// In cases where a $-token is ambiguous, use parentheses e.g. "$(foo)Bar".
+// For example, to call a method on "$src", use "$(src).Method()", and to call
+// a function that is a field, use "$(src.Method)()".
+type FieldExpression struct {
+    Type *FieldExpressionType
+    Pattern string // e.g. "$dest.$ = append([]$src.$.$type(nil), $src.$)"
+}
+
+func (fe FieldExpression) getType() *FieldExpressionType {
+    return fe.Type
+}
+func (fe *FieldExpression) setPattern(pattern string) {
+    fe.Pattern = pattern
+}
+
+const (
+    FieldExpressionTypeVoid  = "void"
+    FieldExpressionTypeBool  = "bool"
+    FieldExpressionTypeValue = "value"
+)
+
+// FieldExpressionType describes some operation (e.g. copier, comparer,
+// appender) on a struct value or on two struct values that can be implemented
+// for a specific field by a [FieldExpression]. This controls how to generate
+// the Go source code for a function that performs that operation.
+//
+// Most users will just call [Struct.Converter], [Struct.Comparer], etc.
+// and do not need to use this unless using Morph to generate their own custom
+// types of functions.
+type FieldExpressionType struct {
+    // Targets specifies that this is an operation over this many input and/or
+    // output struct values.
+    //
+    // Don't count any incidental input or output arguments e.g. database
+    // handles or an error return value. These can be specified in a
+    // function signature later.
+    //
+    // Allowed values are 1 and 2.
+    Targets int
+
+    // Name uniquely identifies the operation e.g. "Append". A [Field] can
+    // only ever have one custom FieldExpression per given Name, and every
+    // FieldExpression in a struct's list of fields that share this name must
+    // have type fields that all point to the same FieldExpressionType.
+    Name string
+
+    // Default is a pattern applied if a pattern on a FieldExpression is the
+    // empty string (indicating default behaviour).
+    //
+    // All "$"-tokens are replaced according to the rules specified by the
+    // [FieldExpression] doc comment.
+    //
+    // An empty Default is treated as "skip".
+    Default string
+
+    // Returns specifies if the function is a boolean comparison expression,
+    // value assignment expression, or a void inspection expression
+    // (see [FieldExpression]).
+    //
+    // Allowed values are FieldExpressionTypeVoid, FieldExpressionTypeBool,
+    // and FieldExpressionTypeValue.
+    //
+    // If the type is FieldExpressionTypeVoid, then Targets must be less than
+    // 2.
+    Type string
+
+    // Comment is an optional comment set on a generated function e.g.
+    // "$ converts [$src.$type] to [$dest.$type]". Leading "//" tokens are not
+    // required, and the comment may contain linebreaks.
+    //
+    // The "$"-tokens "$a", "$b", "$src", "$dest", and "$self" appearing in
+    // Comment are replaced according to the rules specified by the
+    // [FieldExpression] doc comment.
+    //
+    // Additionally, the token "$", when not preceded by a dot, is (at a later
+    // time) replaced by the name of the generated function when formatting a
+    // function.
+    Comment string
+
+    // FieldComment is an optional comment generated above each expression for
+    // each field e.g. "does $a.$ equal $b.$?". Leading "//" tokens are not
+    // required, and the comment may contain linebreaks.
+    //
+    // All "$"-tokens are replaced according to the rules specified by the
+    // [FieldExpression] doc comment.
+    FieldComment string
+
+    // Collect is a logical operator applied to all boolean results when
+    // Returns is set to "bool". This must be set to a string representing
+    // the Go boolean logical operator "&&" or "||". If set to "||", the
+    // generated function returns true immediately on the first true value. If
+    // set to "&&", the generated function returns false immediately on the
+    // first false value.
+    Collect string
+
+    // Accessor returns a pointer to the field expression of this type on a
+    // given field, if one exists. If nil, calls [Field.GetCustomExpression]
+    // with the FieldExpressionType.Name as an argument.
+    Accessor func(f Field) *FieldExpression
+}
+
+func (fet FieldExpressionType) defaultAccessor() func(f Field) *FieldExpression {
+    if fet.Accessor != nil { return fet.Accessor }
+    var Type = fet.Name
+    return func(f Field) *FieldExpression {
+        return f.GetCustomExpression(Type)
+    }
+}
+
+    /* Possible future extension to FieldExpressionType:
+    // Prepend, if not nil, is a function that generates code to be inserted
+    // at the top of a generated function based on the first field (if
+    // Targets == 1) or fields on arguments a and b or source and dest
+    // respectively (if Targets == 2).
+    //
+    // State is a newly initialised map for the generated function that can
+    // be used to maintain state.
+    Prepend func(state map[string]any, a, b Field) string
+    */
+
 
 // FieldMapper maps fields on a struct to fields on another struct.
 //
@@ -287,21 +464,17 @@ func (f Field) Rewrite(input Field) Field {
 // Each invocation of the emit callback function generates a field on the
 // output struct.
 //
+// As a shortcut, a "$" appearing in an emitted Field's Name or Type is
+// replaced with the name or type of the input Field, respectively.
+//
 // It is permitted to call the emit function zero, one, or more than one time
 // to produce zero, one, or more fields from a single input field.
 //
-// As a special case, when emit is invoked, the character "$" is replaced in
-// the name argument with the source field name, "$" is replaced in the type
-// argument with the source field type, ".$" in the value argument with the
-// source field name. Later, when generating a function, "$." is replaced in
-// the value argument with the name of an input argument used to refer to a
-// value of the struct type. In that case, use "$.$" for a fully qualified
-// source field name.
-//
-// For example, for an input `Struct{Name: "Foo"}`, an input `Field{Name:
-// "Bar", Value: "123"}`, then `emit(Field{Name: "Double$", Value: "2 * $.$"})`,
-// for a function with signature `ConvertFoo(input Foo) Something`, generates a
-// field `DoubleBar` with a value `2 * input.Bar`.
+// For example, for an input:
+//    Field{Name: "Foo", Type: "int64"},
+// Then calling emit with the argument:
+//     emit(Field{Name: "$Slice", Type: "[]$"})
+// Would generate a Field with the name "FooSlice" and type `[]int64`.
 type FieldMapper func(input Field, emit func(output Field))
 
 // StructMapper returns a new StructMapper that applies the given FieldMapper
@@ -317,7 +490,8 @@ func (mapper FieldMapper) StructMapper() StructMapper {
         emit := collector(&results)
         for _, input := range out.Fields {
             emit2 := func(output Field) {
-                emit(output.Rewrite(input))
+                output.Rewrite(input)
+                emit(output.Copy())
             }
             mapper(input, emit2)
         }
@@ -327,9 +501,9 @@ func (mapper FieldMapper) StructMapper() StructMapper {
         out.Reverse = func(in2 Struct) Struct {
             out2 := in2.MapFields(func (input2 Field, emit2 func(output Field)) {
                 if input2.Reverse != nil {
-                    input2.Reverse(input2, emit2)
+                    input2.Reverse(input2.Copy(), emit2)
                 } else {
-                    emit2(input2)
+                    emit2(input2.Copy())
                 }
             })
             if oldReverse != nil {
@@ -353,6 +527,15 @@ type Struct struct {
     TypeParams []Field
     Fields     []Field
     Reverse StructMapper
+}
+
+func (s Struct) namedField(name string) (Field, bool) {
+    for _, f := range s.Fields {
+        if f.Name == name {
+            return f.Copy(), true
+        }
+    }
+    return Field{}, false
 }
 
 // Copy returns a (deep) copy of a Struct, ensuring that slices aren't aliased.
@@ -400,376 +583,46 @@ func (s Struct) MapFields(mappers ... FieldMapper) Struct {
 // StructMapper maps a Struct to another Struct.
 type StructMapper func(in Struct) Struct
 
-// Converter generates Go source code for a function that converts a value of
-// the given struct type from a previous struct type.
-//
-// The function is generated to match the provided signature, which must
-// describe a function with at least one method receiver or named argument
-// matching the previous struct type (or a pointer to a struct of that type)
-// (if there are several, the first such occurrence is selected), and exactly
-// one return argument of the same type (or a pointer to a struct of that
-// type). Omit the leading "func" keyword.
-//
-// In the signature, the following tokens are rewritten:
-//
-//   - $From: the previous struct type name.
-//   - $from: the previous struct type name, first letter in lowercase.
-//   - $To: the current struct type name.
-//
-// If a struct has not been renamed, then the previous struct type name is the
-// current struct type name.
-//
-// For example, the signature argument may look something like:
-//
-//     $FromTo$To(ctx context.Context, $from $From) $To
-//     (s *$From) To$To($from *$From) *$To
-//
-//  Or simply, explicitly:
-//
-//     AppleToOrange(apple Apple) Orange
-//
-// In this function, the Type, Tag and Comment fields are ignored on the
-// struct fields.
-//
-// In every field value, the token "$." is rewritten as the input argument
-// name plus ".", the token ".$" is rewritten to the field name prefixed by ".",
-// and the token "$.$" is rewritten as the input argument name plus "." plus
-// the field name.
-//
-// For example, the value "$.FieldOne" will get rewritten to something like
-// "in.FieldOne".
-func (s Struct) Converter(
-    signature string,
-) (Function, error) {
-    if s.From == "" { s.From = s.Name } // shallow copy is fine here
-    signature = rewriteSignatureString(signature, s.From, s.Name)
 
-    esc := func(err error) (Function, error) {
-        return Function{}, fmt.Errorf(
-            "error creating morph.Struct.Converter function for type %q -> %q: %w",
-            s.From, s.Name, err,
-        )
-    }
-
-    fs, err := parseFunctionSignatureFromString(signature)
-    if err != nil {
-        return esc(fmt.Errorf("error parsing function signature: %w", err))
-    }
-
-    inputArg, ok := fs.matchingInput(s.From)
-    if !ok {
-        return esc(fmt.Errorf(
-            "function signature %q must include an input of type %q or *%q",
-            signature, s.From, s.From,
-        ))
-    }
-
-    returns, ok := fs.singleReturn()
-    if (!ok) || ((returns.Type != s.Name) && (returns.Type != "*"+s.Name)) {
-        return esc(fmt.Errorf(
-            "function signature %q must have a single return value of type %q or *%q; got %q",
-            signature, s.Name, s.Name, returns.Type,
-        ))
-    }
-
-    assignments := internal.Map(func(f Field) Field {
-        return postRewriteField(inputArg.Name, f)
-    }, s.Fields)
-
-    body := formatStructConverter(returns.Type, assignments)
-
-    fs.Comment = fmt.Sprintf("%s converts [%s] to [%s].", fs.Name, s.From, s.Name)
-    return Function{
-        Signature: fs,
-        Body:      body,
-    }, nil
+// returnsError returns true if the last return value is an error type.
+func (fs FunctionSignature) returnsError() bool {
+    last, ok := internal.Last(fs.Returns)
+    if !ok { return false }
+    return last.Type == "error"
 }
 
-// Comparer generates Go source code for a function that compares if two
-// struct values are equal.
-//
-// The function is generated to match the provided signature, which must
-// describe a function with at least two method receivers or named arguments
-// matching the struct type (or a pointer to a struct of that type) (if there
-// are several, the first two such occurrences are selected, in order). Omit
-// the leading "func" keyword. Omit the boolean return value.
-//
-// In the signature, the following tokens are rewritten:
-//
-//   - $: the struct type name.
-//
-// For example, the signature argument may look something like:
-//
-//     $Equals(first $, second $)
-//     (source *$) Equals(target *$)
-//
-//  Or simply, explicitly, something like:
-//
-//     Equals(first Thing, second Thing)
-//
-// In this function, the Type, Tag and Comment fields are ignored on the
-// struct fields.
-//
-// In every field comparer, the token "$c." is rewritten as the input argument
-// name plus "." for c == "a" as the first input and c == "b" as the second
-// input. The token ".$" is rewritten to the field name prefixed by ".",
-// and the token "$c.$" is rewritten as the input argument name plus "." plus
-// the field name, for (again) c == "a" or "b".
-//
-// For example, the comparer "$a.$ == $b.X + $b.Y" will get rewritten to
-// something like "first.Foo == second.X + second.Y".
-func (s Struct) Comparer(
-    signature string,
-) (Function, error) {
-    signature = strings.ReplaceAll(signature, "$", s.Name)
-
-    esc := func(err error) (Function, error) {
-        return Function{}, fmt.Errorf(
-            "error creating morph.Struct.Comparer function for type %q -> %q: %w",
-            s.From, s.Name, err,
-        )
+// matchingOutput returns the first argument that is either:
+//  * a return value of a matching type (or a pointer of that type)
+//  * the first method receiver or input argument that is a pointer of
+//    that type.
+func (fs FunctionSignature) matchingOutput(Type string) (arg Argument, isReturnValue bool, ok bool) {
+    // matching return value
+    if output, ok := internal.First(
+        internal.Filter(
+            argumentTypeFilterer(Type),
+            fs.Returns,
+        ),
+    ); ok {
+        return output, true, true
     }
 
-    fs, err := parseFunctionSignatureFromString(signature)
-    if err != nil {
-        return esc(fmt.Errorf("error parsing function signature: %w", err))
+    // matching input argument that must be a pointer
+    isPointer := func(x Argument) bool {
+        return strings.HasPrefix(x.Type, "*")
+    }
+    if output, ok := internal.First(
+        internal.Filter(
+            argumentTypeFilterer(Type),
+            internal.Filter(
+                isPointer,
+                fs.Inputs(),
+            ),
+        ),
+    ); ok {
+        return output, false, true
     }
 
-    arg1, arg2, ok := fs.matchingInputs(s.Name)
-    if !ok {
-        return esc(fmt.Errorf(
-            "function signature %q must include two inputs of type %q or *%q",
-            signature, s.Name, s.Name,
-        ))
-    }
-
-    if len(fs.Returns) > 0 {
-        return esc(fmt.Errorf(
-            "function signature %q must not have return values specified",
-            signature,
-        ))
-    }
-    fs.Returns = []Field{
-        {Type: "bool",},
-    }
-
-    comparisons := internal.Map(func(f Field) Field {
-        return rewriteComparer(arg1.Name, arg2.Name, f)
-    }, s.Fields)
-
-    body := formatStructComparer(arg1.Name, arg2.Name, comparisons)
-
-    fs.Comment = fmt.Sprintf("%s returns true if two [%s] values are equal.", fs.Name, s.Name)
-    return Function{
-        Signature: fs,
-        Body:      body,
-    }, nil
-}
-
-// Copier generates Go source code for a function that copies a source struct
-// value to a destination struct value,
-//
-// The function is generated to match the provided signature, which must
-// describe a function with at least one method receiver or named argument
-// matching the source struct type (or a pointer to a struct of that type)
-// (if there are several, the first such occurrence is selected), and exactly
-// one return argument of the same type (or a pointer to a struct of that
-// type), which may be named or unnamed. Omit the leading "func" keyword.
-//
-// In the signature, the following tokens are rewritten:
-//
-//   - $: the struct type name.
-//
-// For example, the signature argument may look something like:
-//
-//     $Copy(from $) $
-//     (from *$) Copy() $
-//
-//  Or simply, explicitly, something like:
-//
-//     ThingCopy(from Thing) (to Thing)
-//
-// In this function, the Type, Tag and Comment fields are ignored on the
-// struct fields.
-//
-// In every field copier, the token "$target." is rewritten as the target
-// argument name plus "." for target == "src" as the source input and target ==
-// "dest" as the output. The token ".$" is rewritten to the field name prefixed
-// by ".", and the token "$target.$" is rewritten as the target argument name
-// plus "." plus the field name, for (again) target == "src" or "dest".
-//
-// For example, the copier "$dest.$ = $src.X + $src.Y" will get rewritten to
-// something like "to.Foo == from.X + from.Y".
-func (s Struct) Copier(
-    signature string,
-) (Function, error) {
-    signature = strings.ReplaceAll(signature, "$", s.Name)
-
-    esc := func(err error) (Function, error) {
-        return Function{}, fmt.Errorf(
-            "error creating morph.Struct.Copier function for type %q -> %q: %w",
-            s.From, s.Name, err,
-        )
-    }
-
-    fs, err := parseFunctionSignatureFromString(signature)
-    if err != nil {
-        return esc(fmt.Errorf("error parsing function signature: %w", err))
-    }
-
-    inputArg, ok := fs.matchingInput(s.Name)
-    if !ok {
-        return esc(fmt.Errorf(
-            "function signature %q must include an inputs of type %q or *%q",
-            signature, s.Name, s.Name,
-        ))
-    }
-
-    if len(fs.Returns) != 1 {
-        return esc(fmt.Errorf(
-            "function signature %q must have exactly one return value",
-            signature,
-        ))
-    }
-
-    copies := internal.Map(func(f Field) Field {
-        return rewriteCopier(inputArg.Name, "_out", f)
-    }, s.Fields)
-
-    body := formatStructCopier(inputArg.Name, "_out", fs.Returns[0].Type, copies)
-
-    fs.Comment = fmt.Sprintf("%s returns a copy of the [%s] %s.", fs.Name, s.Name, inputArg.Name)
-    return Function{
-        Signature: fs,
-        Body:      body,
-    }, nil
-}
-
-// Orderer generates Go source code for a function that compares two struct
-// values and returns true if the first is less than the second.
-//
-// The function is generated to match the provided signature, which must
-// describe a function with at least two method receivers or named arguments
-// matching the struct type (or a pointer to a struct of that type) (if there
-// are several, the first two such occurrences are selected, in order). Omit
-// the leading "func" keyword. Omit the boolean return value.
-//
-// In the signature, the following tokens are rewritten:
-//
-//   - $: the struct type name.
-//
-// For example, the signature argument may look something like:
-//
-//     $LessThan(first $, second $)
-//     (source *$) LessThan(target *$)
-//
-//  Or simply, explicitly, something like:
-//
-//     ThingLessThan(first Thing, second Thing)
-//
-// In this function, the Type, Tag and Comment fields are ignored on the
-// struct fields.
-//
-// In every field orderer, the token "$c." is rewritten as the input argument
-// name plus "." for c == "a" as the first input and c == "b" as the second
-// input. The token ".$" is rewritten to the field name prefixed by ".",
-// and the token "$c.$" is rewritten as the input argument name plus "." plus
-// the field name, for (again) c == "a" or "b".
-//
-// For example, the comparer "$a.$ < ($b.X + $b.Y)" will get rewritten to
-// something like "first.Foo < (second.X + second.Y)".
-func (s Struct) Orderer(
-    signature string,
-) (Function, error) {
-    signature = strings.ReplaceAll(signature, "$", s.Name)
-
-    esc := func(err error) (Function, error) {
-        return Function{}, fmt.Errorf(
-            "error creating morph.Struct.Orderer function for type %q -> %q: %w",
-            s.From, s.Name, err,
-        )
-    }
-
-    fs, err := parseFunctionSignatureFromString(signature)
-    if err != nil {
-        return esc(fmt.Errorf("error parsing function signature: %w", err))
-    }
-
-    arg1, arg2, ok := fs.matchingInputs(s.Name)
-    if !ok {
-        return esc(fmt.Errorf(
-            "function signature %q must include two inputs of type %q or *%q",
-            signature, s.Name, s.Name,
-        ))
-    }
-
-    if len(fs.Returns) > 0 {
-        return esc(fmt.Errorf(
-            "function signature %q must not have return values specified",
-            signature,
-        ))
-    }
-    fs.Returns = []Field{
-        {Type: "bool",},
-    }
-
-    comparisons := internal.Map(func(f Field) Field {
-        return rewriteOrderer(arg1.Name, arg2.Name, f)
-    }, s.Fields)
-
-    body := formatStructOrderer(arg1.Name, arg2.Name, comparisons)
-
-    fs.Comment = fmt.Sprintf("%s returns true if the first [%s] is less than the second.", fs.Name, s.Name)
-    return Function{
-        Signature: fs,
-        Body:      body,
-    }, nil
-}
-
-// rewriteSignatureString performs the special '$' replacement in a function
-// signature specified as a string.
-//
-// depreacted: use internal.RewriteSignatureString instead.
-func rewriteSignatureString(sig string, from string, to string) string {
-    return internal.RewriteSignatureString(sig, from, to)
-}
-
-// postRewriteField performs the special '$.' replacement described by
-// FieldMapper when the field appears in a function as a value.
-//
-// TODO ignore "$." inside string or rune literals
-func postRewriteField(argName string, output Field) Field {
-    output.Value = strings.ReplaceAll(output.Value, "$.", argName + ".")
-    return output
-}
-
-// rewriteComparer performs the special '$.' replacement described by
-// [Struct.Comparer].
-//
-// TODO ignore "$." inside string or rune literals
-func rewriteComparer(argName1 string, argName2 string, output Field) Field {
-    output.Comparer = strings.ReplaceAll(output.Comparer, ".$", "."+output.Name)
-    output.Comparer = strings.ReplaceAll(output.Comparer, "$a.", argName1 + ".")
-    output.Comparer = strings.ReplaceAll(output.Comparer, "$b.", argName2 + ".")
-    return output
-}
-
-func rewriteOrderer(argName1 string, argName2 string, output Field) Field {
-    output.Orderer = strings.ReplaceAll(output.Orderer, ".$", "."+output.Name)
-    output.Orderer = strings.ReplaceAll(output.Orderer, "$a.", argName1 + ".")
-    output.Orderer = strings.ReplaceAll(output.Orderer, "$b.", argName2 + ".")
-    return output
-}
-
-// rewriteCopier performs the special '$.' replacement described by
-// [Struct.Copier].
-//
-// TODO ignore "$." inside string or rune literals
-func rewriteCopier(inputName string, outputName string, output Field) Field {
-    output.Copier = strings.ReplaceAll(output.Copier, ".$", "."+output.Name)
-    output.Copier = strings.ReplaceAll(output.Copier, "$src.", inputName + ".")
-    output.Copier = strings.ReplaceAll(output.Copier, "$dest.", outputName + ".")
-    return output
+    return Argument{}, false, false
 }
 
 // collector returns an emit function that appends each emitted value to dest
@@ -983,7 +836,7 @@ func (f WrappedFunction) Wrap(wrappers ... FunctionWrapper) (WrappedFunction, er
 //     }
 //
 type ArgRewriter struct {
-    Capture []Field
+    Capture []Variable
     Formatter string
 }
 
@@ -996,9 +849,9 @@ type ArgRewriter struct {
 // with a matching name.
 //
 // The name argument sets the name of the created function.
-func (fs FunctionSignature) Bind(name string, xargs []Field) (Function, error) {
-    return bind(fs, name, xargs, nil)
-}
+// func (fs FunctionSignature) Bind(name string, xargs []Field) (Function, error) {
+//     return bind(fs, name, xargs, nil)
+// }
 
 // Bind constructs a new higher-order function that returns the result of
 // the input function with the specified args automatically bound to arguments
@@ -1012,6 +865,8 @@ func (fs FunctionSignature) Bind(name string, xargs []Field) (Function, error) {
 //
 // The function is inlined in the new function. To avoid this, use
 // [FunctionSignature.Bind] instead.
-func (f Function) Bind(name string, xargs []Field) (Function, error) {
-    return bind(f.Signature, name, xargs, &f)
-}
+//
+// TODO remove this and build a funcwrapper instead.
+// func (f Function) Bind(name string, xargs []Field) (Function, error) {
+//     return bind(f.Signature, name, xargs, &f)
+//}
