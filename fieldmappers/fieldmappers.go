@@ -11,7 +11,6 @@ import (
 
     "github.com/tawesoft/morph"
     "github.com/tawesoft/morph/fieldmappers/fieldops"
-    "github.com/tawesoft/morph/internal"
 )
 
 // Compose returns a new [morph.FieldMapper] that applies each of the given
@@ -28,7 +27,9 @@ func Compose(mappers ... morph.FieldMapper) morph.FieldMapper {
             outputs = nil
             for _, in := range fields {
                 emit2 := func(output morph.Field) {
-                    catch(output.Rewrite(input))
+                    output = output.Copy()
+                    output.Rewrite(input)
+                    catch(output)
                 }
                 mapper(in, emit2)
             }
@@ -121,34 +122,6 @@ func Conditionally(filter func(morph.Field) bool, mapper morph.FieldMapper) morp
     }
 }
 
-// RewriteType returns a new [morph.FieldMapper] that rewrites a field's type
-// name to the given type name.
-//
-// The convert and reverse arguments describe field value patterns used by
-// [morph.Converter] to convert to and from this type.
-//
-// Additionally, the tokens $from, $From, $to, $To in convert and reverse
-// are replaced by source and destination types (first letter is always
-// lowercased in $from or $to).
-//
-// The token `$` in Type is replaced by the current type name.
-func RewriteType(Type string, convert string, reverse string) morph.FieldMapper {
-    return func(in morph.Field, emit func(morph.Field)) {
-        out := in
-        out.Type = strings.Replace(Type, "$", in.Type, 1)
-        out.Value = internal.RewriteSignatureString(convert, in.Type, out.Type)
-        out.Comment = "from " + in.Type
-        out.Reverse = Compose(func(in2 morph.Field, emit2 func(morph.Field)) {
-            out2 := in2
-            out2.Type = in.Type
-            out2.Value = internal.RewriteSignatureString(reverse, out.Type, in.Type)
-            out2.Comment = in.Comment
-            emit2(out2)
-        }, in.Reverse)
-        emit(out)
-    }
-}
-
 // StripComments is a [morph.FieldMapper] that strips all comments from each
 // input field.
 func StripComments(input morph.Field, emit func(output morph.Field)) {
@@ -179,12 +152,12 @@ func TimeToInt64(input morph.Field, emit func(output morph.Field)) {
         f := morph.Field{
             Name:    input.Name,
             Type:    "int64",
-            Value:   "$.$.UTC().Unix()",
+            Converter: "$dest.$ = $src.$.UTC().Unix()",
             Comment: "time in seconds since Unix epoch",
             Reverse: Compose(func(input2 morph.Field, emit2 func(output morph.Field)) {
                 output := input2
                 output.Type = "time.Time"
-                output.Value = "time.Unix($.$, 0).UTC()"
+                output.Converter = "$dest.$ = time.Unix($src.$, 0).UTC()"
                 output.Comment = input.Comment
                 fieldops.Time(output, emit2)
             }, input.Reverse),

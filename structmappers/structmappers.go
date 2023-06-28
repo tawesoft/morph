@@ -41,23 +41,20 @@ func SetComment(comment string) morph.StructMapper {
 }
 
 // Rename returns a new [morph.StructMapper] that sets the struct's name
-// to the provided string and sets the struct's From field to its original
-// name.
+// to the provided string.
 //
 // In the provided name, the token "$" is rewritten to the existing name. For
 // example, Rename("$Xml") on a struct named "Foo" maps to a struct named
-// "FooXml" with its From field set to Foo.
+// "FooXml".
 //
 // Rename is reversible with [Reverse].
 func Rename(name string) morph.StructMapper {
     return func(s morph.Struct) morph.Struct {
         oldName := s.Name
-        s.From = s.Name
         s.Name = strings.ReplaceAll(name, "$", s.Name)
         s.Reverse = Compose(func (in morph.Struct) morph.Struct {
             out := in
             out.Name = oldName
-            out.From = in.Name
             return out
         }, s.Reverse)
         return s

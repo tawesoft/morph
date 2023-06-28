@@ -10,24 +10,14 @@ import (
     "github.com/tawesoft/morph"
 )
 
-// NoConvert is a [morph.FieldMapper] that sets the Value expression on a field
-// to use the zero value of the destination type when converting between two
-// structs with [morph.Struct.Converter].
-func NoConvert(in morph.Field, emit func(out morph.Field)) {
-    out := in
-    out.Value = "zero"
-    emit(out)
-}
-
 // Time is a [morph.FieldMapper][ that sets appropriate expressions on fields
 // of type [time.Time].
 func Time(in morph.Field, emit func(out morph.Field)) {
     if in.Type == "time.Time" {
         out := in
-        out.Value    = ""
         out.Comparer = "$a.$.Equals($b.$)"
-        out.Copier   = ""
         out.Orderer  = "$b.$.After($a.$)"
+        out.Truther  = "!this.IsZero()"
         emit(out)
     } else {
         emit(in)

@@ -44,6 +44,7 @@ functions in different ways.
 **Status**
 
 * Morph core is feature complete ✓
+* **broken** refactor for more general purpose custom extensibility ⬅
 * Documentation is in progress ⬅
 * Needs more features in subpackages
 * Morph core needs tidying and better error handling

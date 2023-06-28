@@ -162,11 +162,16 @@ type Field struct {
 
     // For fields appearing in structs that have been mapped only...
     Reverse   FieldMapper
-    Converter ConverterFieldExpression
-    Comparer  ComparerFieldExpression
-    Copier    CopierFieldExpression
-    Orderer   OrdererFieldExpression
-    Zeroer    ZeroerFieldExpression
+
+    Converter BuiltinFieldExpression // x=y;  See [StructConverter].
+    Comparer  BuiltinFieldExpression // x==y; See [Struct.Comparer].
+    Copier    BuiltinFieldExpression // x=x;  See [Struct.Copier].
+    Orderer   BuiltinFieldExpression // x<y;  See [Struct.Orderer].
+    Zeroer    BuiltinFieldExpression // x=0;  See [Struct.Zeroer].
+    Truther   BuiltinFieldExpression // x!=0; See [Struct.Truther].
+
+    // Custom are field expressions indexed by the FieldExpressionType's Name.
+    // If set, they define a custom operation on the field.
     Custom    []FieldExpression
 }
 
@@ -345,13 +350,6 @@ type FieldExpression struct {
     Pattern string // e.g. "$dest.$ = append([]$src.$.$type(nil), $src.$)"
 }
 
-func (fe FieldExpression) getType() *FieldExpressionType {
-    return fe.Type
-}
-func (fe *FieldExpression) setPattern(pattern string) {
-    fe.Pattern = pattern
-}
-
 const (
     FieldExpressionTypeVoid  = "void"
     FieldExpressionTypeBool  = "bool"
@@ -432,17 +430,46 @@ type FieldExpressionType struct {
     // first false value.
     Collect string
 
-    // Accessor returns a pointer to the field expression of this type on a
+    // Accessor returns the pattern of a FieldExpression of this type on a
     // given field, if one exists. If nil, calls [Field.GetCustomExpression]
-    // with the FieldExpressionType.Name as an argument.
-    Accessor func(f Field) *FieldExpression
+    // with the FieldExpressionType.Name as an argument. It's likely that you
+    // want to leave this as nil.
+    Accessor func(f Field) string
+
+    // Setter sets the field expression on a field of this FieldExpressionType.
+    // If nil, calls [Field.SetCustomExpression] with the
+    // FieldExpressionType.Name as an argument. It's likely that you want to
+    // leave this as nil.
+    Setter func(f *Field, pattern string)
 }
 
-func (fet FieldExpressionType) defaultAccessor() func(f Field) *FieldExpression {
-    if fet.Accessor != nil { return fet.Accessor }
-    var Type = fet.Name
-    return func(f Field) *FieldExpression {
-        return f.GetCustomExpression(Type)
+func (fet *FieldExpressionType) defaultAccessor() func(f Field) string {
+    if fet.Accessor != nil {
+        return func(f Field) string {
+            pattern := fet.Accessor(f)
+            if pattern == "" { pattern = fet.Default }
+            return pattern
+        }
+    } else {
+        var Type = fet.Name
+        return func(f Field) string {
+            fe := f.GetCustomExpression(Type)
+            if (fe != nil) && (fe.Type != fet) {
+                panic("mismatching FieldExpressionType")
+            }
+            if (fe == nil) || (fe.Pattern == "") { return fet.Default }
+            return fe.Pattern
+        }
+    }
+}
+
+func (fet *FieldExpressionType) defaultSetter() func(*Field, string) {
+    if fet.Setter != nil { return fet.Setter }
+    return func(f *Field, pattern string)  {
+        f.SetCustomExpression(FieldExpression{
+            Type:    fet,
+            Pattern: pattern,
+        })
     }
 }
 
@@ -523,7 +550,6 @@ func (mapper FieldMapper) StructMapper() StructMapper {
 type Struct struct {
     Comment    string
     Name       string
-    From       string
     TypeParams []Field
     Fields     []Field
     Reverse StructMapper
@@ -540,21 +566,11 @@ func (s Struct) namedField(name string) (Field, bool) {
 
 // Copy returns a (deep) copy of a Struct, ensuring that slices aren't aliased.
 func (s Struct) Copy() Struct {
-    var typeParams, fields []Field
-
-    if len(s.TypeParams) > 0 {
-        typeParams = append([]Field{}, s.TypeParams...)
-    }
-    if len(s.Fields) > 0 {
-        fields = append([]Field{}, s.Fields...)
-    }
-
     ss := Struct{
         Comment:    s.Comment,
         Name:       s.Name,
-        From:       s.From,
-        TypeParams: typeParams,
-        Fields:     fields,
+        TypeParams: internal.RecursiveCopySlice(s.TypeParams),
+        Fields:     internal.RecursiveCopySlice(s.Fields),
         Reverse:    s.Reverse,
     }
     return ss

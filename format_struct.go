@@ -17,20 +17,18 @@ import (
 // The standalone token "$", which may appear in a function signature or
 // function comment, is left unchanged.
 //
-// leftToken and rightToken control $-token the replacement style such as "$a",
-// "$b" or "$src", "$dest", for leftToken and rightToken "a" and "b" or "src"
-// and "dest", respectively.
+// leftToken and rightToken control $-token replacement style such as "$a",
+// "$b" or "$dest", "$src", for leftToken and rightToken.
 //
-// The provided Field may be the zero value, in which case '$'-token
-// replacements are not applied where they involve a concept of a current
-// field.
+// The provided field, leftArgument.Name, and rightArgumentName may be zero
+// values, in which case they are not allowed in this context.
 func (fet FieldExpressionType) rewriteString2(
     sig string,
     operation string,
     leftToken string,
     leftStruct Struct,
     leftArgument Argument,
-    leftField Field,
+    field Field,
     rightToken string,
     rightStruct Struct,
     rightArgument Argument,
@@ -48,18 +46,28 @@ func (fet FieldExpressionType) rewriteString2(
         },
         ByName: func(name string) (string, bool) {
             if name == leftToken {
-                return leftArgument.Name, true
+                if leftArgument.Name == "" {
+                    return "$"+leftToken, true
+                } else {
+                    return leftArgument.Name, true
+                }
             } else if name == rightToken {
-                return rightArgument.Name, true
+                if rightArgument.Name == "" {
+                    return "$"+rightToken, true
+                } else {
+                    return rightArgument.Name, true
+                }
             } else {
                 return "", false
             }
         },
         FieldByName: func(structName string, fieldName string) (string, bool) {
-            if (structName == leftToken) && (leftField.Type != "" ) {
-                return leftArgument.Name + "." + fieldName, true
-            } else if (structName == rightToken) && (leftField.Type != "") {
-                return rightArgument.Name + "." + fieldName, true
+            if field.Type == "" {
+                return "", false
+            } else if (structName == leftToken) {
+                return leftArgument.Name + "." + fieldName, leftArgument.Name != ""
+            } else if (structName == rightToken) {
+                return rightArgument.Name + "." + fieldName, rightArgument.Name != ""
             } else {
                 return "", false
             }
@@ -67,27 +75,31 @@ func (fet FieldExpressionType) rewriteString2(
         Modifier: func(kw string, target string) (string, bool) {
             if kw == "" {
                 // "struct.$" for current field
-                if (target == leftArgument.Name) && (leftField.Type != "" ) {
-                    return target + "." + leftField.Name, true
-                } else if (target == rightArgument.Name) && (leftField.Type != "" ) {
-                    return target + "." + leftField.Name, true
+                if field.Type == "" {
+                    return "", false
+                } else if target == leftArgument.Name {
+                    return target + "." + field.Name, true
+                } else if target == rightArgument.Name {
+                    return target + "." + field.Name, true
                 }
             } else if kw == "type" {
-                // "struct.$type" or
+                // "struct.field.$type" or
                 if s, f, ok := strings.Cut(target, "."); ok {
                     // "struct.field.$type"
                     if s == leftArgument.Name {
                         f, ok := leftStruct.namedField(f)
-                        return f.Type, ok
+                        return f.Type, ok && (leftArgument.Name != "")
                     } else if s == rightArgument.Name {
                         f, ok := rightStruct.namedField(f)
-                        return f.Type, ok
+                        return f.Type, ok && (rightArgument.Name != "")
                     }
                 } else {
-                    // "struct.$type"
-                    if target == leftArgument.Name {
+                    // "$src.$type"
+                    if target == "" {
+                        return "", false
+                    } else if (target == "$"+leftToken) || (target == leftArgument.Name) {
                         return leftArgument.Type, true
-                    } else if target == rightArgument.Name {
+                    } else if (target == "$"+rightToken) || (target == rightArgument.Name) {
                         return rightArgument.Type, true
                     }
                 }
@@ -104,6 +116,8 @@ func (fet FieldExpressionType) rewriteString2(
                     return strings.ToLower(string(target[0])) + target[1:], true
                 }
                 return "", true
+            } else if kw == "name" {
+                return strings.TrimPrefix(target, "*"), true
             }
             return "", false
         },
@@ -235,6 +249,8 @@ func (fet FieldExpressionType) rewriteString1(
                     return strings.ToLower(string(target[0])) + target[1:], true
                 }
                 return "", true
+            } else if kw == "name" {
+                return strings.TrimPrefix(target, "*"), true
             }
             return "", false
         },
@@ -431,22 +447,12 @@ func (fet *FieldExpressionType) formatStructUnaryFunction(
     }
 
     feAccessor := fet.defaultAccessor()
+    feSetter := fet.defaultSetter()
 
     fields := internal.Map(func(f Field) Field {
         f = f.Copy()
-        fe := feAccessor(f)
+        pattern := feAccessor(f)
 
-        pattern := ""
-        if fe != nil {
-            if fe.getType() != fet {
-                if fe.getType() != nil {
-                    panic(fmt.Errorf("mismatching field expressions types on fields"))
-                }
-            }
-            pattern = fe.Pattern
-        }
-
-        if pattern == "" { pattern = fet.Default }
         destArg := arg
         if fet.Type == FieldExpressionTypeValue {
             destArg.Name = "_out"
@@ -464,10 +470,7 @@ func (fet *FieldExpressionType) formatStructUnaryFunction(
         }
         f.Comment = rewritten
 
-        f.SetCustomExpression(FieldExpression{
-            Type:    fet,
-            Pattern: pattern,
-        })
+        feSetter(&f, pattern)
         return f
     }, self.Fields)
 
@@ -480,7 +483,7 @@ func (fet *FieldExpressionType) formatStructUnaryFunction(
         body = fet.formatStructValueFunctionBody(arg, destIsReturnValue, fields)
     }
 
-    fs.Comment, err = fet.rewriteString1(fet.Comment, operation, self, arg, Field{})
+    fs.Comment, err = fet.rewriteString1(fet.Comment, fs.Name, self, arg, Field{})
     if err != nil {
         panic(fmt.Errorf("cannot rewrite field expression type comment pattern %q: %w", fet.Comment, err))
     }
@@ -568,22 +571,11 @@ func (fet *FieldExpressionType) formatStructBinaryFunction(
     }
 
     feAccessor := fet.defaultAccessor()
+    feSetter := fet.defaultSetter()
 
     fields := internal.Map(func(f Field) Field {
         f = f.Copy()
-        fe := feAccessor(f)
-
-        pattern := ""
-        if fe != nil {
-            if fe.getType() != fet {
-                if fe.getType() != nil {
-                    panic(fmt.Errorf("mismatching field expressions types on fields"))
-                }
-            }
-            pattern = fe.Pattern
-        }
-
-        if pattern == "" { pattern = fet.Default }
+        pattern := feAccessor(f)
 
         destArg := arg1
         if fet.Type == FieldExpressionTypeValue {
@@ -602,10 +594,7 @@ func (fet *FieldExpressionType) formatStructBinaryFunction(
         }
         f.Comment = rewritten
 
-        f.SetCustomExpression(FieldExpression{
-            Type:    fet,
-            Pattern: pattern,
-        })
+        feSetter(&f, pattern)
         return f
     }, aOrDest.Fields)
 
@@ -618,7 +607,7 @@ func (fet *FieldExpressionType) formatStructBinaryFunction(
         body = fet.formatStructValueFunctionBody(arg1, destIsReturnValue, fields)
     }
 
-    fs.Comment, err = fet.rewriteString2(fet.Comment, operation, aOrDestToken, aOrDest, arg1, Field{}, bOrSrcToken, bOrSrc, arg2)
+    fs.Comment, err = fet.rewriteString2(fet.Comment, fs.Name, aOrDestToken, aOrDest, arg1, Field{}, bOrSrcToken, bOrSrc, arg2)
     if err != nil {
         panic(fmt.Errorf("cannot rewrite field expression type comment pattern %q: %w", fet.Comment, err))
     }
@@ -648,12 +637,7 @@ func (fet *FieldExpressionType) formatStructBooleanFunctionBody(
 
         sb.WriteString(formatComment("\t", f.Comment))
 
-        fe := feAccessor(f)
-        if fe == nil {
-            panic("accessor returned nil field expression")
-        }
-
-        pattern := fe.Pattern
+        pattern := feAccessor(f)
         if pattern == "skip" {
             sb.WriteString("\t//skipped\n")
             continue
@@ -694,12 +678,7 @@ func (fet *FieldExpressionType) formatStructValueFunctionBody(
 
         sb.WriteString(formatComment("\t", f.Comment))
 
-        fe := feAccessor(f)
-        if fe == nil {
-            panic("accessor returned nil field expression")
-        }
-
-        pattern := fe.Pattern
+        pattern := feAccessor(f)
         if pattern == "skip" {
             sb.WriteString("\t//skipped\n")
             continue

@@ -149,7 +149,7 @@ func Equal(x Apple, y Apple) bool {
                 return apple.CustomBinaryFunction(fetSet.Name, "($src.$type.$untitle $src.$type) Copy() $dest.$type", apple)
             },
             internal.Must(internal.FormatSource(`
-// Set sets _unnamed_dest to the value of apple.
+// Copy sets _unnamed_dest to the value of apple.
 func (apple Apple) Copy() Apple {
     _out := Apple{}
 
@@ -187,7 +187,7 @@ func Zero() Apple {
                 return apple.CustomBinaryFunction(fetSet.Name, "Copy(dest *Apple, src Apple)", apple)
             },
             internal.Must(internal.FormatSource(`
-// Set sets dest to the value of src.
+// Copy sets dest to the value of src.
 func Copy(dest *Apple, src Apple) {
     _out := Apple{}
 

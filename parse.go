@@ -12,8 +12,8 @@ import (
     "github.com/tawesoft/morph/internal"
 )
 
-// ParseStruct parses a given source file, looking for a struct with the given
-// name.
+// ParseStruct parses a given source file, looking for a struct type definition
+// that defines a struct type with the given name.
 //
 // If name == "", ParseStruct returns the first struct found.
 //
@@ -25,6 +25,9 @@ import (
 //
 // Parsing is performed without full object resolution. This means parsing will
 // still succeed even on some files that may not actually compile.
+//
+// ParseStruct only looks for struct type definitions in the top-level scope.
+// This means that type definitions inside functions, etc. will be ignored.
 func ParseStruct(filename string, src any, name string) (result Struct, err error) {
     esc := func(err error) (Struct, error) {
         return Struct{}, fmt.Errorf("error parsing %q for struct %q: %w", filename, name, err)
@@ -128,8 +131,8 @@ func ParseFirstFunctionSignature(filename string, src any) (result FunctionSigna
 //
 // For example, to look for a method signature such as `func (foo *Bar) Baz()`,
 // i.e. method Baz on type Bar with a pointer receiver, then set the name
-// argument to "Baz" and the type argument to either "Bar" or "*Bar" (it
-// doesn't matter which). Generic type constraints are ignored.
+// argument to "Baz" and the type argument to "Bar" (it does not matter that
+// foo is a pointer type). Generic type constraints are ignored.
 //
 // Parsing is performed without full object resolution. This means parsing will
 // still succeed even on some files that may not actually compile.

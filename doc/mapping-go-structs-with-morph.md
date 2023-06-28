@@ -29,7 +29,7 @@ We're going to call it an Orange.
 First, we need to tell morph about the struct type definition.
 
 Using [morph.ParseStruct] we can extract this from a string literal or
-parse a file for a struct by name:
+from a Go source file:
 
 ```go
 apple, err := morph.ParseStruct("apple.go", nil, "Apple")
@@ -65,8 +65,8 @@ func FromPence(pennies int64) Price { /* ... */ }
 Again, these definitions are just for us, and don't need to be written down
 anywhere.
 
-> **Tip:** morph doesn't need full type information. It is the Go compiler that 
-> ensures morph generates correct code.
+> **Tip:** Morph doesn't need full type information. The Go compiler, not
+> Morph, is the right place to verify our generated code for type-correctness.
  
 [morph.ParseStruct]: https://pkg.go.dev/github.com/tawesoft/morph#ParseStruct
 [morph.ParseStruct (from string) example]: https://pkg.go.dev/github.com/tawesoft/morph#example-ParseStruct-FromString
@@ -75,13 +75,13 @@ anywhere.
 
 ## Mapping to a new struct type definition
 
-There are two ways morph can change our parsed Apple struct type definition 
+There are two ways Morph can change our parsed Apple struct type definition 
 into our desired Orange struct type definition. We can also combine the two.
 
 * Using a [morph.StructMapper] and the [morph.Struct.Map] method.
 * Using a [morph.FieldMapper] and the [morph.Struct.MapFields] method.
 
-A field mapper is easier to write, but less powerful.
+A FieldMapper is easier to write, but a StructMapper is more powerful.
 
 ### Using a StructMapper to rename a struct type
 
@@ -99,8 +99,8 @@ orange := apple.Map(structmappers.Rename("Orange"))
 > **Example code:** [structmappers.Rename example]
 
 > **Tip:** You might think that it's simpler just to set the Name field on the
-> `morph.Struct` directly, but we should always prefer to use a StructMapper. 
-> The reason why will become clear soon.
+> `morph.Struct` directly, but we should always prefer to use an appropriate 
+> mapper. The reason why will become clear soon.
 
 We've taken the first step in morphing our Apple. By printing the resulting
 mapped struct, we can generate some source code for a new
@@ -121,15 +121,15 @@ type Orange struct {
 }
 ```
 
-Next, we need to work on the fields.
+Next, we need to work on converting the fields to integers.
 
 [structmappers.Rename example]: https://pkg.go.dev/github.com/tawesoft/morph/structmappers#example-Rename
 
 
-### Using a FieldMapper to change a struct type's fields
+### Using a FieldMapper to change a struct type
 
-A FieldMapper is a function that is called on every field on an input struct, 
-and generates output fields on an output struct.
+A FieldMapper is a function that is called on every field on an input struct
+in turn, and generates output fields on an output struct.
 
 For our Apple, that means a FieldMapper will be called once each for the fields
 `Picked`, `LastEaten`, `Weight`, and `Price`.
@@ -197,13 +197,12 @@ func Passthrough(input morph.Field, emit func(output morph.Field)) {
 
 Let's implement our FieldMapper for weight and price separately, and let's
 discriminate on field type, rather than name, so that it's more
-general-purpose and reusable. We'll see another reason why we have separate 
-price and weight implementations, later.
+general-purpose and reusable.
 
 ```go
 func WeightToInt64(input morph.Field, emit func(output morph.Field)) {
     if input.Type == "weight.Weight" {
-        output: = input // copy
+        output := input // copy
         output.Type = "int64" // rewrite the type
         emit(output)
     } else {
@@ -213,7 +212,7 @@ func WeightToInt64(input morph.Field, emit func(output morph.Field)) {
 ```
 
 > **Tip:** it is always safe to copy or modify the input argument inside a 
-> StructMapper or a field mapper.
+> StructMapper or a FieldMpper.
 
 > **Practice:** what would a FieldMapper for the Price field look like?
 
@@ -256,13 +255,42 @@ type Orange struct {
 [morph.FieldMapper example]: https://pkg.go.dev/github.com/tawesoft/morph#example-FieldMapper
 
 
-## Generating struct value conversion functions
+### Composing mappers
+
+A FieldMapper can be promoted to a StructMapper:
+
+```go
+fm := morph.FieldMapper(fieldmappers.TimeToInt64)
+sm := fm.StructMapper()
+```
+
+Multiple FieldMapper values can be composed to a single FieldMapper value:
+
+```go
+fms := fieldmappers.Compose(
+    fieldMappers.TimeToInt64,
+    WeightToInt64,
+    PriceToInt64,
+)
+```
+
+And multiple StructMapper values can be composed to a single StructMapper
+value:
+
+```go
+sms := structmappers.Compose(
+    structmappers.Rename("Foo"),
+    fieldmappers.TimeToInt64.StructMapper(),
+)
+```
+
+
+## Defining operations on struct values
 
 > **Tip:** 
-> You don't have to have used morph to generate a struct type definition to get
-> value out of this section. It's still useful if you want to learn how to use 
-> morph to create conversion functions for your existing struct
-> types.
+> You don't have to have used Morph to generate a struct type definition to get
+> value out of this section. You can still define operations on struct values
+> of existing struct types.
 
 We've now got a full definition for our new Orange struct type, automatically
 derived from our starting Apple type.
@@ -276,10 +304,9 @@ type Orange struct {
 }
 ```
 
-That's struct type definitions. What about when we use Apple or Orange 
-struct values?
+But what about when we have a value of type Apple or a value of type Orange?
 
-Let's say we have an apple value in our source code:
+Let's say we have an Apple value in our source code:
 
 ```go
 apple := Apple{
@@ -290,38 +317,57 @@ apple := Apple{
 }
 ```
 
-We want to be able to convert to an orange, and back, like so:
+We may want to be able to convert to an orange, and back, like so:
 
 ```go
 orange := apple.ToOrange()
 appleAgain := orange.ToApple()
-appleAgain == orange // true
 ```
 
 > **Tip:** if you don't like these as methods, Morph can just as easily 
-> generate functions in the form `AppleToOrange(input Apple) Orange`.
+> generate functions in the form `AppleToOrange(input Apple) Orange`
+> or `AppleToOrange(dest *Orange, input apple).`
 
-This is achieved through the [morph.Struct.Converter] method, which generates
-source code for a function that converts a struct value based on the same
-StructMapper and FieldMapper applications we've seen before.
+To do this, we need to define a FieldExpression for each field on
+the generated morph.Struct representation, in this case, a "converter" 
+expression.
 
-The generated function matches a supplied function signature, which is
-quite flexible. The function signature must have at least one argument or 
-receiver value of the source type (here, Apple), and exactly one return 
-value of the result type (here, Orange). Pointer values are fine, too.
+This is done through the same FieldMapper applications that we've seen before.
+
+For example, the FieldMapper implemented at `fieldmappers.TimeToInt64` has 
+already provided a converter expression automatically to fields of type
+`time.Time`.
+
+With this expression set, we can use Morph to generate a function based on
+the set converter expressions.
+
+In this case, this is the [morph.Struct.Converter] method. In cases where
+we've defined new operations, we would instead use
+[morph.Struct.CustomUnaryFunction] and [morph.Struct.CustomBinaryFunction].
+
+We also need to supply a function signature for our generated function.
+The function signature is quite flexible in how it can be written, but in 
+this case it must have a source value of the source type (here, Apple), and 
+exactly one destination value of the result type (here, Orange).
 
 ```go
-const converterSignature := "(apple Apple) ToOrange() Orange"
+const converterSignature = "(apple Apple) ToOrange() Orange"
 ```
 
-We can actually use a shortcut here, and use `$from`, `$From` and `$To`
-tokens to fill in some of the function signature for us, like so:
+We can alternatively use $-tokens to fill in some of the function 
+signature for us with variables:
 
 ```go
-const converterSignature = "($from $From) To$To() $To"
+const converterSignature = "($src.$type.$untitle $src.$type) To$dest.$type() $dest.$type"
 ```
 
-And then let morph generate the function for us:
+This might look a little ugly, but we only have to write it once. In the
+future, we can reuse this template function signature on different struct types 
+without having to write a new function signature manually.
+
+> **Tip:** We'll learn more about the $-token syntax later.
+
+Now we can let morph generate a converter function for us:
 
 ```go
 appleToOrange, err := orange.Converter(converterSignature)
@@ -333,33 +379,34 @@ This generates an output like so:
 ```go
 // ToOrange converts [Apple] to [Orange].
 func (apple Apple) ToOrange() Orange {
-	return Orange{
-		Picked:    apple.Picked.UTC().Unix(),
-		LastEaten: apple.LastEaten.UTC().Unix(),
-		// Weight is the zero value.
-		// Price is the zero value.
-	}
+    return = Orange{
+        Picked:    apple.Picked.UTC().Unix(),
+        LastEaten: apple.LastEaten.UTC().Unix(),
+        Weight:    apple.Weight,
+        Price:     apple.Price,
+    }
 }
 ```
 
-Notice that a helpful doc comment was automatically generated for us
-at the start of the function, too.
+> **Tip:**  the output might not look exactly like this, but the generated
+> code will give the same result.
 
-Note that the Weight and Price fields haven't been updated, and are left
-at the zero value.
+Note that the Weight and Price fields are just being copied without any 
+conversion happening. This is because when we created a FieldMapper for 
+weights and prices, we didn't define a converter FieldExpression.
 
-This is because when we created a FieldMapper for weights and prices, we
-defined how to map field types, but not field values.
-
-We have to go back to our custom FieldMapper implementation and add a Value 
-expression to the emitted field.
+Let's go back to our custom FieldMapper implementation, and add a new
+Converter FieldExpression on the emitted Weight field:
 
 ```go
 func WeightToInt64(input morph.Field, emit func(output morph.Field)) {
     if input.Type == "weight.Weight" {
-        output: = input // copy
-        output.Type = "int64" // rewrite the type
-        output.Value = "$.$.Grams()" // rewrite the value
+        output: = input
+        output.Type = "int64"
+        
+        // how to convert from weight.Weight to int64
+        output.Converter = "$dest.$ = $src.$.Grams()"
+        
         emit(output)
     } else {
         emit(input)
@@ -367,27 +414,32 @@ func WeightToInt64(input morph.Field, emit func(output morph.Field)) {
 }
 ```
 
-Here we see `$` tokens again. In a FieldMapper, they have the following 
-meanings when they appear in a `morph.Field.Value`:
+Again, the Price mapping has been left as an exercise.
 
-| Token | Description                              | Example                                       |
-|-------|------------------------------------------|-----------------------------------------------|
-| `$.`  | Input struct name                        | `$.LastEaten` replaced with `apple.LastEaten` |
-| `$.$` | Input struct name and current field name | `$.$` replaced with `apple.Weight`            |
+Here we see $-tokens again. The full syntax is described by
+[morph.FieldExpression], but here's a few examples:
 
-This is enough to generate the forward mapping, `Apple` to `Orange`. Again,
-the Price mapping has been left as an exercise.
+| Token        | Description                                           | Example                                                                          |
+|--------------|-------------------------------------------------------|----------------------------------------------------------------------------------|
+| `$src.$`     | Input struct name and current field name              | `$src.$` replaced with `apple.Weight`.                                           |
+| `$dest.$`    | Output struct name and current field name             | `$dest.$` replaced with `orange.Weight`.                                         |
+| `*.$type`    | Type of the current token.                            | `$dest.$type` replaced with `Orange`.                                            |
+| `*.$name`    | Name of the current token, removing pointers.         | `$dest.$type.$name`, where `$dest.$type` is `*Orange`, replaced with `Orange`.   |
+| `*.$untitle` | Name of the current token, first character lowercase. | `$dest.$type.$untitle`, where `$dest.$type` is `Orange`, replaced with `orange`. |
+
+With our FieldMapper updated, this is enough to generate the forward mapping, 
+a function that converts a value of type `Apple` to a value of type `Orange`. 
 
 > **Example:** [morph.Struct.Converter example]
 
 ```go
 func (apple Apple) ToOrange() Orange {
-	return Orange{
-		Picked:    apple.Picked.UTC().Unix(),
-		LastEaten: apple.LastEaten.UTC().Unix(),
-		Weight:    apple.Weight.Grams(),
-		Price:     apple.Price.Pence()
-	}
+    return Orange{
+        Picked:    apple.Picked.UTC().Unix(),
+        LastEaten: apple.LastEaten.UTC().Unix(),
+        Weight:    apple.Weight.Grams(),
+        Price:     apple.Price.Pence()
+    }
 }
 ```
 
@@ -404,7 +456,8 @@ We want to generate a function, `func (orange Orange) ToApple() Apple`,
 that maps Orange struct values back into Apple struct values.
 
 We could do this by reversing our steps, and applying StructMappers and 
-FieldMappers in reverse order to undo the changes we've made.
+FieldMappers in reverse order, that perform the opposite mappings, to undo the 
+changes we've made.
 
 That would be a bit awkward, however, because all the fields on our Orange
 are now of type `int64` and it's difficult to discriminate between them.
@@ -420,16 +473,17 @@ appleFromOrange := orange.Map(structmappers.Reverse) // magic!!!
 > previous section came in handy! Thanks to the token replacement, we didn't 
 > have to specify a function signature again.
 
-But before we do this, let's go back to our custom FieldMapper one last time,
-and add the finishing touches to make it reversible too.
+But before we do this, let's go back to our custom FieldMapper 
+implementations for Weight and Price one last time, and add the finishing 
+touches to make them reversible too.
 
 A reverse function is simple to write. It is just a FieldMapper, but as it is 
 only called on a field that has explicitly set it as its reverse function, 
 it does not need to discriminate on name or type. The original mapper then 
 registers the Reverse function on the emitted field.
 
-So, we need to update our FieldMapper to set the Reverse function on the
-emitted field. For good measure, we can set the Comment, too.
+So, we need to update our FieldMapper to set the Reverse function. For good
+measure, we can set the Comment, too.
 
 When we set the Reverse function on a field, we compose it with the field's 
 existing reverse function. This means that even if we've applied several 
@@ -444,15 +498,15 @@ func WeightToInt64(input morph.Field, emit func(output morph.Field)) {
     reverse := func(input morph.Field, emit func(output morph.Field)) {
         output := input
         output.Type = "weight.Weight"
-        output.Value = "weight.FromGrams($.$)"
+        output.Converter = "$dest.$ = weight.FromGrams($src.$)"
         output.Comment = ""
         emit(output)
     }
 
     if input.Type == "weight.Weight" {
-        output := input // copy
-        output.Type = "int64" // rewrite the type
-        output.Value = "$.$.Grams()" // rewrite the value
+        output := input
+        output.Type = "int64"
+        output.Converter = "$dest.$ = $src.$.Grams()"
         output.Reverse = fieldmappers.Compose(reverse, output.Reverse)
         output.Comment = "weight in grams"
         emit(output)
@@ -466,7 +520,7 @@ So finally:
 
 ```go
 appleFromOrange := orange.Map(structmappers.Reverse)
-orangeToApple, err := appleFromOrange.Converter(converterSignature)
+orangeToApple, err := StructConverter(converterSignature, orange, apple)
 fmt.Println(orangeToApple)
 ```
 
@@ -476,12 +530,12 @@ struct values of type Orange back to struct values of type Apple:
 ```go
 // ToApple converts [Orange] to [Apple].
 func (orange Orange) ToApple() Apple {
-	return Apple{
-		Picked:    time.Unix(orange.Picked, 0).UTC(),
-		LastEaten: time.Unix(orange.LastEaten, 0).UTC(),
-		Weight:    weight.FromGrams(orange.Weight),
-		Price:     price.FromPence(orange.Price),
-	}
+    return Apple{
+        Picked:    time.Unix(orange.Picked, 0).UTC(),
+        LastEaten: time.Unix(orange.LastEaten, 0).UTC(),
+        Weight:    weight.FromGrams(orange.Weight),
+        Price:     price.FromPence(orange.Price),
+    }
 }
 ```
 
@@ -493,9 +547,12 @@ func (orange Orange) ToApple() Apple {
 
 [morph.StructMapper]: https://pkg.go.dev/github.com/tawesoft/morph#StructMapper
 [morph.FieldMapper]: https://pkg.go.dev/github.com/tawesoft/morph#FieldMapper
+[morph.FieldExpression]: https://pkg.go.dev/github.com/tawesoft/morph#FieldExpression
 [morph.Struct.Map]: https://pkg.go.dev/github.com/tawesoft/morph#Struct.Map
 [morph.Struct.MapFields]: https://pkg.go.dev/github.com/tawesoft/morph#Struct.MapFields
 [morph.Struct.Converter]: https://pkg.go.dev/github.com/tawesoft/morph#Struct.Converter
+[morph.Struct.CustomUnaryFunction]: https://pkg.go.dev/github.com/tawesoft/morph#Struct.CustomUnaryFunction
+[morph.Struct.CustomBinaryFunction]: https://pkg.go.dev/github.com/tawesoft/morph#Struct.CustomBinaryFunction
 [structmappers package]: https://pkg.go.dev/github.com/tawesoft/morph/structmappers
 [structmappers.Rename]: https://pkg.go.dev/github.com/tawesoft/morph/structmappers#Rename
 [fieldmappers package]: https://pkg.go.dev/github.com/tawesoft/morph/fieldmappers
